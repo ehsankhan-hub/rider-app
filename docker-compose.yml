@@ -1,0 +1,74 @@
+services:
+  mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rider_root_change_me}
+      MYSQL_USER: ${MYSQL_USER:-rider}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-rider_pass_change_me}
+    ports:
+      - "3309:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./infra/docker/mysql/01-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prider_root_change_me"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  auth:
+    build:
+      context: .
+      dockerfile: services/auth/Dockerfile
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-rider}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-rider_pass_change_me}
+      AUTH_DB_NAME: auth_db
+      AUTH_PORT: 3001
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
+      JWT_ACCESS_EXPIRES: ${JWT_ACCESS_EXPIRES:-15m}
+      JWT_REFRESH_EXPIRES: ${JWT_REFRESH_EXPIRES:-7d}
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  ride-api:
+    build:
+      context: .
+      dockerfile: services/ride-api/Dockerfile
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: ${MYSQL_USER:-rider}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-rider_pass_change_me}
+      RIDE_DB_NAME: ride_db
+      RIDE_API_PORT: 3002
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
+      NODE_ENV: production
+    ports:
+      - "3002:3002"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      auth:
+        condition: service_started
+
+  customer-web:
+    build:
+      context: .
+      dockerfile: apps/customer-web/Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - auth
+      - ride-api
+
+volumes:
+  mysql_data:

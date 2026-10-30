@@ -1,0 +1,18 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a222c;
+  --text: #f4f7fb;
+  --muted: #9aa8b8;
+  --accent: #3ddc97;
+  --danger: #ff6b6b;
+  --line: #2a3542;
+}
+* { box-sizing: border-box; }
+html, body, app-root { height: 100%; margin: 0; }
+body { font-family: "Segoe UI", Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); }
+button, input, select { font: inherit; }
+button { cursor: pointer; border: 0; border-radius: 10px; padding: 12px 16px; background: var(--accent); color: #06281a; font-weight: 600; }
+button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+input, select { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: #12181f; color: var(--text); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
+.leaflet-container { background: #1b2733; }

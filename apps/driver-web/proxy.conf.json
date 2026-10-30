@@ -1,0 +1,15 @@
+{
+  "/auth-api": {
+    "target": "http://localhost:3001",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/auth-api": "" }
+  },
+  "/ride-api": {
+    "target": "http://localhost:3002",
+    "secure": false,
+    "changeOrigin": true,
+    "pathRewrite": { "^/ride-api": "" },
+    "ws": true
+  }
+}

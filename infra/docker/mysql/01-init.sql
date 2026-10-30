@@ -1,0 +1,7 @@
+CREATE DATABASE IF NOT EXISTS auth_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS ride_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER IF NOT EXISTS 'rider'@'%' IDENTIFIED BY 'rider_pass_change_me';
+GRANT ALL PRIVILEGES ON auth_db.* TO 'rider'@'%';
+GRANT ALL PRIVILEGES ON ride_db.* TO 'rider'@'%';
+FLUSH PRIVILEGES;

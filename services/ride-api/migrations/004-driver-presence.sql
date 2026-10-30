@@ -1,0 +1,4 @@
+ALTER TABLE drivers
+  ADD COLUMN is_online TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN online_since DATETIME NULL,
+  ADD COLUMN last_seen_at DATETIME NULL;

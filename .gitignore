@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.angular/
+coverage/
+.env
+certs/
+*.log
+.DS_Store
+docker-data/

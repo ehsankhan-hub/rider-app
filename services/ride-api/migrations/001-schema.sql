@@ -1,0 +1,81 @@
+CREATE TABLE IF NOT EXISTS customer_profiles (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  user_id CHAR(36) NOT NULL UNIQUE,
+  full_name VARCHAR(120) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vehicle_types (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  display_name VARCHAR(80) NOT NULL,
+  base_fare DECIMAL(10,2) NOT NULL,
+  per_km DECIMAL(10,2) NOT NULL,
+  per_minute DECIMAL(10,2) NOT NULL,
+  capacity INT NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS wallets (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  user_id CHAR(36) NOT NULL UNIQUE,
+  balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+  currency CHAR(3) NOT NULL DEFAULT 'USD',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  wallet_id CHAR(36) NOT NULL,
+  type ENUM('TOPUP', 'RIDE_DEBIT', 'REFUND') NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  reference VARCHAR(64) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_wt_wallet FOREIGN KEY (wallet_id) REFERENCES wallets(id)
+);
+
+CREATE TABLE IF NOT EXISTS drivers (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  user_id CHAR(36) NULL,
+  full_name VARCHAR(120) NOT NULL,
+  vehicle_type_id CHAR(36) NOT NULL,
+  lat DECIMAL(10,7) NOT NULL,
+  lng DECIMAL(10,7) NOT NULL,
+  is_available TINYINT(1) NOT NULL DEFAULT 1,
+  CONSTRAINT fk_driver_vt FOREIGN KEY (vehicle_type_id) REFERENCES vehicle_types(id)
+);
+
+CREATE TABLE IF NOT EXISTS rides (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  customer_user_id CHAR(36) NOT NULL,
+  driver_id CHAR(36) NULL,
+  vehicle_type_id CHAR(36) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  payment_method ENUM('CASH', 'WALLET') NOT NULL,
+  pickup_lat DECIMAL(10,7) NOT NULL,
+  pickup_lng DECIMAL(10,7) NOT NULL,
+  pickup_address VARCHAR(255) NOT NULL,
+  dropoff_lat DECIMAL(10,7) NOT NULL,
+  dropoff_lng DECIMAL(10,7) NOT NULL,
+  dropoff_address VARCHAR(255) NOT NULL,
+  distance_km DECIMAL(10,2) NOT NULL,
+  duration_min DECIMAL(10,2) NOT NULL,
+  fare_amount DECIMAL(10,2) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_ride_driver FOREIGN KEY (driver_id) REFERENCES drivers(id),
+  CONSTRAINT fk_ride_vt FOREIGN KEY (vehicle_type_id) REFERENCES vehicle_types(id),
+  INDEX idx_rides_customer (customer_user_id),
+  INDEX idx_rides_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS ride_status_events (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  ride_id CHAR(36) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  note VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_rse_ride FOREIGN KEY (ride_id) REFERENCES rides(id)
+);

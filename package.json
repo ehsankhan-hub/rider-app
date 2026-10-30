@@ -1,0 +1,24 @@
+{
+  "name": "rider-platform",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Professional ride-hailing platform: customer app, auth service, ride API",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "typescript": "5.8.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
