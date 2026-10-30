@@ -688,20 +688,13 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     );
   }
 
-  private applyTiles(lang: MapLang): void {
+  private applyTiles(_lang: MapLang): void {
     if (!this.map) return;
     this.baseLayer?.remove();
-    const spec =
-      lang === 'en'
-        ? {
-            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-            attribution: 'Tiles &copy; Esri',
-          }
-        : {
-            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            attribution: '&copy; OpenStreetMap',
-          };
-    this.baseLayer = L.tileLayer(spec.url, { attribution: spec.attribution, maxZoom: 19 }).addTo(this.map);
+    this.baseLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap',
+      maxZoom: 19,
+    }).addTo(this.map);
     this.baseLayer.bringToBack();
   }
 
