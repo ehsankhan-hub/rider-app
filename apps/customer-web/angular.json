@@ -18,7 +18,11 @@
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
-            "assets": ["src/assets"],
+            "assets": [
+              "src/assets",
+              { "glob": "manifest.webmanifest", "input": "src", "output": "/" },
+              { "glob": "sw.js", "input": "src", "output": "/" }
+            ],
             "styles": [
               "../../node_modules/leaflet/dist/leaflet.css",
               "src/styles.scss"
@@ -41,7 +45,7 @@
           "options": {
             "proxyConfig": "proxy.conf.json",
             "port": 4200,
-            "host": "127.0.0.1",
+            "host": "0.0.0.0",
             "ssl": true,
             "sslCert": "../../certs/dev-cert.pem",
             "sslKey": "../../certs/dev-key.pem"
