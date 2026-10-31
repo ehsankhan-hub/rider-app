@@ -27,6 +27,12 @@ export class Driver extends Model {
   @Column(DataType.DECIMAL(10, 7))
   declare lng: string;
 
+  @Column(DataType.CHAR(2))
+  declare countryIso: string | null;
+
+  @Column(DataType.STRING(80))
+  declare countryName: string | null;
+
   @Default(true)
   @Column(DataType.BOOLEAN)
   declare isAvailable: boolean;

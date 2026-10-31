@@ -13,4 +13,10 @@ export class CustomerProfile extends Model {
 
   @Column(DataType.STRING(120))
   declare fullName: string;
+
+  @Column(DataType.CHAR(2))
+  declare countryIso: string | null;
+
+  @Column(DataType.STRING(80))
+  declare countryName: string | null;
 }

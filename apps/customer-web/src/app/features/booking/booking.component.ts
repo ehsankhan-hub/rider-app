@@ -31,8 +31,8 @@ const COPY = {
     lang: 'Map language',
     locating: 'Finding your location…',
     currentLocation: 'Current location',
-    outsideCity: 'This is your location. It is outside the service city, so nearby cars may not be available.',
     needPickup: 'Choose a pickup from search or the map.',
+    needLocation: 'Allow location so the pickup is where you are. Or search for it.',
     needDropoff: 'Pickup is set. Choose a dropoff.',
     needVehicle: 'Choose a vehicle type.',
     quoteFailed: 'Could not calculate the fare.',
@@ -74,8 +74,8 @@ const COPY = {
     lang: 'لغة الخريطة',
     locating: 'جارٍ تحديد موقعك…',
     currentLocation: 'موقعك الحالي',
-    outsideCity: 'هذا موقعك. هو خارج مدينة الخدمة، وقد لا تتوفر سيارات قريبة.',
     needPickup: 'حدد الانطلاق بالبحث أو من الخريطة.',
+    needLocation: 'اسمح بالموقع ليكون الانطلاق من مكانك. أو ابحث عنه.',
     needDropoff: 'تم تحديد الانطلاق. حدد الوجهة.',
     needVehicle: 'اختر نوع السيارة.',
     quoteFailed: 'تعذر حساب الأجرة.',
@@ -149,8 +149,8 @@ type BookStage = 'search' | 'pickup' | 'rides';
             <label class="field">
               <span class="mark from"></span>
               <input
-                [ngModel]="pickupQuery()"
-                (ngModelChange)="onQuery('pickup', $event)"
+                [value]="pickupQuery()"
+                (input)="onQuery('pickup', $any($event.target).value)"
                 (focus)="focusedField.set('pickup')"
                 [placeholder]="locating() ? t('locating') : t('pickupPh')"
                 autocomplete="off"
@@ -172,8 +172,8 @@ type BookStage = 'search' | 'pickup' | 'rides';
             <label class="field">
               <span class="mark to"></span>
               <input
-                [ngModel]="dropoffQuery()"
-                (ngModelChange)="onQuery('dropoff', $event)"
+                [value]="dropoffQuery()"
+                (input)="onQuery('dropoff', $any($event.target).value)"
                 (focus)="focusedField.set('dropoff')"
                 [placeholder]="t('dropoffPh')"
                 autocomplete="off"
@@ -472,7 +472,8 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   focusedField = signal<PointField | null>(null);
   locating = signal(false);
   private pickupFromUser = false;
-  private serviceCity: { lat: number; lng: number; label: string } | null = null;
+  private locationDenied = signal(false);
+  private serviceCity: { lat: number; lng: number } | null = null;
   nearbyCars = signal<NearbyCar[]>([]);
 
   vehicleTypeId = '';
@@ -534,13 +535,8 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     setTimeout(() => this.map?.invalidateSize(), 50);
     this.api.runtime().subscribe({
       next: (config) => {
-        const label = [config.city.name, config.city.state].filter((part) => part.length > 0).join(', ');
-        this.serviceCity = {
-          lat: config.city.lat,
-          lng: config.city.lng,
-          label: label || config.city.name,
-        };
-        if (!this.pickupFromUser) this.placeAtServiceCity();
+        this.serviceCity = { lat: config.city.lat, lng: config.city.lng };
+        if (!this.pickupFromUser) this.showServiceCity();
         this.useCurrentLocation();
       },
     });
@@ -698,6 +694,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
 
   stepHint(): string {
     if (this.locating() && !this.pickupPoint()) return this.t('locating');
+    if (this.locationDenied() && !this.pickupPoint()) return this.t('needLocation');
     if (!this.pickupPoint()) return this.t('needPickup');
     if (!this.dropoffPoint()) return this.t('needDropoff');
     return this.t('hint');
@@ -863,36 +860,36 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.message.set(text);
   }
 
-  private placeAtServiceCity(): void {
+  private showServiceCity(): void {
     const city = this.serviceCity;
-    if (!city || !this.map || this.pickupFromUser) return;
-    const latlng = L.latLng(city.lat, city.lng);
-    this.setPoint('pickup', latlng, city.label);
-    this.map.setView(latlng, 13);
-    this.reverseInto('pickup', latlng);
+    if (!city || !this.map || this.pickupFromUser || this.pickupPoint()) return;
+    this.map.setView([city.lat, city.lng], 13);
   }
 
   private useCurrentLocation(): void {
     if (!navigator.geolocation) {
-      this.placeAtServiceCity();
+      this.locationDenied.set(true);
       return;
     }
     this.locating.set(true);
+    this.locationDenied.set(false);
     navigator.geolocation.getCurrentPosition(
       (position) => {
         this.zone.run(() => {
           this.locating.set(false);
+          this.locationDenied.set(false);
           if (this.pickupFromUser || !this.map) return;
           const { latitude, longitude } = position.coords;
           const latlng = L.latLng(latitude, longitude);
           this.setPoint('pickup', latlng, this.t('currentLocation'));
           this.map.setView(latlng, 15);
           this.reverseInto('pickup', latlng);
+          this.api.rememberCountry(latitude, longitude, this.session.user()?.fullName).subscribe({ error: () => undefined });
         });
       },
       () => this.zone.run(() => {
         this.locating.set(false);
-        this.placeAtServiceCity();
+        if (!this.pickupFromUser) this.locationDenied.set(true);
       }),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
@@ -955,16 +952,33 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     if (!keepView) this.fitBoth();
   }
 
-  private reverseInto(field: PointField, latlng: L.LatLng): void {
+  private reverseInto(field: PointField, latlng: L.LatLng, attempt = 0): void {
     const token = field === 'pickup' ? ++this.pickupRev : ++this.dropoffRev;
     this.api.reversePlace(latlng.lat, latlng.lng, this.lang()).subscribe({
       next: (place) => {
         const current = field === 'pickup' ? this.pickupRev : this.dropoffRev;
-        if (!place || token !== current) return;
-        if (field === 'pickup') this.pickupQuery.set(place.label);
-        else this.dropoffQuery.set(place.label);
+        if (token !== current) return;
+        this.writeQuery(field, place?.label?.trim() || this.coordLabel(latlng));
+      },
+      error: () => {
+        const current = field === 'pickup' ? this.pickupRev : this.dropoffRev;
+        if (token !== current) return;
+        if (attempt < 1) {
+          window.setTimeout(() => this.reverseInto(field, latlng, attempt + 1), 400);
+          return;
+        }
+        this.writeQuery(field, this.coordLabel(latlng));
       },
     });
+  }
+
+  private writeQuery(field: PointField, value: string): void {
+    if (field === 'pickup') this.pickupQuery.set(value);
+    else this.dropoffQuery.set(value);
+  }
+
+  private coordLabel(latlng: L.LatLng): string {
+    return `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
   }
 
   private runSearch(field: PointField, query: string): void {

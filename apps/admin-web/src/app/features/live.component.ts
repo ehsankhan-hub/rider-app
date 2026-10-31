@@ -58,27 +58,49 @@ type BoardRide = OperationsBoard['rides'][number];
             </tbody>
           </table>
         </div>
-        <h3>Drivers</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Name</th><th>Vehicle</th><th>Status</th><th>Online since</th><th>Last seen</th></tr>
-            </thead>
-            <tbody>
-              @for (driver of view.drivers; track driver.id) {
-                <tr>
-                  <td class="strong">{{ driver.fullName }}</td>
-                  <td>{{ driver.vehicleName }}</td>
-                  <td><span class="pill" [attr.data-tone]="driverTone(driver)">{{ status(driver) }}</span></td>
-                  <td class="muted">{{ when(driver.onlineSince, view.timezone) }}</td>
-                  <td class="muted">{{ when(driver.lastSeenAt, view.timezone) }}</td>
-                </tr>
-              } @empty {
-                <tr><td class="empty" colspan="5">No registered drivers yet.</td></tr>
-              }
-            </tbody>
-          </table>
-        </div>
+        <h3>Drivers by country</h3>
+        @for (group of grouped(view.drivers); track group.country) {
+          <h4>{{ group.country }} <span class="count">{{ group.rows.length }}</span></h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Vehicle</th><th>Status</th><th>Online since</th><th>Last seen</th></tr>
+              </thead>
+              <tbody>
+                @for (driver of group.rows; track driver.id) {
+                  <tr>
+                    <td class="strong">{{ driver.fullName }}</td>
+                    <td>{{ driver.vehicleName }}</td>
+                    <td><span class="pill" [attr.data-tone]="driverTone(driver)">{{ status(driver) }}</span></td>
+                    <td class="muted">{{ when(driver.onlineSince, view.timezone) }}</td>
+                    <td class="muted">{{ when(driver.lastSeenAt, view.timezone) }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @empty {
+          <p class="hint">No registered drivers yet.</p>
+        }
+        <h3>Customers by country</h3>
+        <p class="hint">A customer’s country is where their phone last was, or the pickup of their latest trip.</p>
+        @for (group of grouped(view.customers); track group.country) {
+          <h4>{{ group.country }} <span class="count">{{ group.rows.length }}</span></h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Name</th></tr>
+              </thead>
+              <tbody>
+                @for (customer of group.rows; track customer.id) {
+                  <tr><td class="strong">{{ customer.fullName }}</td></tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @empty {
+          <p class="hint">No customers yet. A name appears after someone opens the app or books a ride.</p>
+        }
         <h3>Trips this day</h3>
         <p class="hint">Open trips stay at the top. A trip marked Needs review did not reach the drop-off. Open Review to compare the quote with where the car stopped and how long it ran. Accept the fare if the rider got out there. Mark it fake if the trip did not happen — that fare is then left out of driver earnings.</p>
         <div class="table-wrap">
@@ -198,6 +220,8 @@ type BoardRide = OperationsBoard['rides'][number];
       tbody tr:last-child td { border-bottom: 0; }
       tbody tr:hover td { background: #243244; }
       .num { text-align: right; font-variant-numeric: tabular-nums; }
+      h4 { margin: 8px 0 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+      .count { color: var(--muted); font-size: 12px; font-weight: 650; }
       .strong { font-weight: 650; }
       .muted { color: var(--muted); }
       .nowrap { white-space: nowrap; }
@@ -308,6 +332,19 @@ export class LiveComponent implements OnInit, OnDestroy {
     if (status === 'cancelled') return 'bad';
     if (status === 'in_progress' || status === 'arriving') return 'trip';
     return 'open';
+  }
+
+  grouped<T extends { countryName: string | null }>(rows: T[]): Array<{ country: string; rows: T[] }> {
+    const buckets = new Map<string, T[]>();
+    for (const row of rows) {
+      const country = row.countryName || 'Country not set';
+      const list = buckets.get(country) ?? [];
+      list.push(row);
+      buckets.set(country, list);
+    }
+    return [...buckets.entries()]
+      .sort((a, b) => (a[0] === 'Country not set' ? 1 : b[0] === 'Country not set' ? -1 : a[0].localeCompare(b[0])))
+      .map(([country, group]) => ({ country, rows: group }));
   }
 
   status(driver: OperationsBoard['drivers'][number]): string {

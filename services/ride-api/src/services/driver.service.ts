@@ -3,7 +3,9 @@ import { RideDao } from '../dao/ride.dao';
 import { VehicleTypeDao } from '../dao/vehicle-type.dao';
 import { RideEvents } from '../sockets/ride-events';
 import { CatalogService } from './catalog.service';
+import { CountryStamp } from './country-stamp';
 import { RideService } from './ride.service';
+import { countryIsoAt } from './service-area';
 import { AppError } from '../utils/app-error';
 import { Driver } from '../models/driver.model';
 import { Ride } from '../models/ride.model';
@@ -16,6 +18,7 @@ export class DriverService {
     private readonly rideEvents: RideEvents,
     private readonly catalog: CatalogService,
     private readonly rideService: RideService,
+    private readonly countries: CountryStamp,
   ) {}
 
   async registerVehicle(userId: string, input: { vehicleTypeId: string; fullName: string }) {
@@ -58,6 +61,7 @@ export class DriverService {
       onlineSince: existing.isOnline && existing.onlineSince ? existing.onlineSince : now,
       lastSeenAt: now,
     });
+    await this.rememberCountry(existing.id, input.lat, input.lng, existing.countryIso);
     const driver = await this.driverDao.findByUserId(userId);
     return { driver, activeRide: active ? await this.rideService.present(active) : null };
   }
@@ -77,6 +81,10 @@ export class DriverService {
   async updateLocation(userId: string, lat: number, lng: number): Promise<void> {
     const driver = await this.requireDriver(userId);
     await this.driverDao.updateLocation(driver.id, lat.toFixed(7), lng.toFixed(7));
+    const boxed = countryIsoAt(lat, lng);
+    if (!driver.countryIso || (boxed && boxed !== driver.countryIso)) {
+      await this.rememberCountry(driver.id, lat, lng, driver.countryIso);
+    }
     const active = await this.rideDao.findActiveByDriver(driver.id);
     if (active) {
       this.rideEvents.emitDriverLocation(active.customerUserId, { rideId: active.id, lat, lng });
@@ -116,6 +124,12 @@ export class DriverService {
         completedAt: ride.updatedAt,
       })),
     };
+  }
+
+  private async rememberCountry(id: string, lat: number, lng: number, current: string | null): Promise<void> {
+    const home = await this.countries.at(lat, lng);
+    if (!home || home.iso === current) return;
+    await this.driverDao.setCountry(id, home.iso, home.name);
   }
 
   private async requireActiveVehicle(vehicleTypeId: string) {

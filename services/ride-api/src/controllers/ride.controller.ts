@@ -15,6 +15,12 @@ const reviewSchema = z.object({
   decision: z.enum(['accepted', 'rejected']),
 });
 
+const countrySchema = z.object({
+  lat: z.number(),
+  lng: z.number(),
+  fullName: z.string().trim().min(2).max(120).optional(),
+});
+
 const createRideSchema = quoteSchema.extend({
   paymentMethod: z.enum(['CASH', 'WALLET']),
   pickupAddress: z.string().min(3),
@@ -80,6 +86,18 @@ export class RideController {
       const userId = this.requireUser(req);
       const data = await this.rideService.cancel(userId, String(req.params['id']));
       res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  rememberCountry = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (req.userRole !== 'CUSTOMER') throw new AppError(403, 'Customer account required', 'FORBIDDEN');
+      const userId = this.requireUser(req);
+      const dto = countrySchema.parse(req.body);
+      await this.rideService.rememberCountry(userId, dto.fullName, dto.lat, dto.lng);
+      res.json({ data: { ok: true } });
     } catch (err) {
       next(err);
     }

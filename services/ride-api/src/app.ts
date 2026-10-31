@@ -16,6 +16,7 @@ import { WalletController } from './controllers/wallet.controller';
 import { PlacesController } from './controllers/places.controller';
 import { NearbyCarsController } from './controllers/nearby-cars.controller';
 import { PlacesService } from './services/places.service';
+import { CountryStamp } from './services/country-stamp';
 import { NearbyCarsService } from './services/nearby-cars.service';
 import { DriverService } from './services/driver.service';
 import { DriverController } from './controllers/driver.controller';
@@ -41,6 +42,9 @@ export function createApp(rideEvents: RideEvents) {
   const driverDao = new DriverDao();
   const rideDao = new RideDao();
 
+  const placesService = new PlacesService();
+  const countryStamp = new CountryStamp(new RegionDao(), placesService);
+  const customers = new CustomerProfileDao();
   const catalogService = new CatalogService(new RegionDao(), new CurrencyDao(), new SettingsDao(), vehicleTypeDao);
   const routeService = new RouteService();
   const pricingService = new PricingService(vehicleTypeDao, routeService, catalogService);
@@ -55,17 +59,18 @@ export function createApp(rideEvents: RideEvents) {
     walletService,
     rideEvents,
     catalogService,
-    new CustomerProfileDao(),
+    customers,
+    countryStamp,
   );
 
   const rideController = new RideController(rideService);
   const walletController = new WalletController(walletService);
-  const placesController = new PlacesController(new PlacesService());
+  const placesController = new PlacesController(placesService);
   const nearbyCarsController = new NearbyCarsController(new NearbyCarsService(driverDao, catalogService));
-  const driverService = new DriverService(driverDao, rideDao, vehicleTypeDao, rideEvents, catalogService, rideService);
+  const driverService = new DriverService(driverDao, rideDao, vehicleTypeDao, rideEvents, catalogService, rideService, countryStamp);
   const driverController = new DriverController(driverService, rideService, routeService);
   const catalogController = new CatalogController(catalogService);
-  const operationsController = new OperationsController(new OperationsService(driverDao, rideDao, catalogService));
+  const operationsController = new OperationsController(new OperationsService(driverDao, rideDao, catalogService, customers, countryStamp));
 
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'ride-api' }));
   app.use(

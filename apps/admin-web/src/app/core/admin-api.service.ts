@@ -84,8 +84,16 @@ export interface OperationsBoard {
     isOnline: boolean;
     isAvailable: boolean;
     onTrip: boolean;
+    countryIso: string | null;
+    countryName: string | null;
     onlineSince: string | null;
     lastSeenAt: string | null;
+  }>;
+  customers: Array<{
+    id: string;
+    fullName: string;
+    countryIso: string | null;
+    countryName: string | null;
   }>;
   rides: Array<{
     id: string;

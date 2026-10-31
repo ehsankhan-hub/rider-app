@@ -110,6 +110,10 @@ export class RideApiService {
       .pipe(map((r) => r.data));
   }
 
+  rememberCountry(lat: number, lng: number, fullName: string | undefined) {
+    return this.http.post(`${env.rideApi}/api/v1/me/country`, { lat, lng, fullName });
+  }
+
   createRide(body: Record<string, unknown>) {
     return this.http.post<{ data: Ride }>(`${env.rideApi}/api/v1/rides`, body).pipe(map((r) => r.data));
   }

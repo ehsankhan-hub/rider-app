@@ -15,6 +15,13 @@ export class RideDao {
     });
   }
 
+  findLatestByCustomer(userId: string): Promise<Ride | null> {
+    return Ride.findOne({
+      where: { customerUserId: userId },
+      order: [['createdAt', 'DESC']],
+    });
+  }
+
   findByCustomer(userId: string): Promise<Ride[]> {
     return Ride.findAll({
       where: { customerUserId: userId },

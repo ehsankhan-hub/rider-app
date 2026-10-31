@@ -1,6 +1,8 @@
+import { CustomerProfileDao } from '../dao/customer-profile.dao';
 import { DriverDao } from '../dao/driver.dao';
 import { RideDao } from '../dao/ride.dao';
 import { CatalogService } from './catalog.service';
+import { CountryStamp } from './country-stamp';
 import { Driver } from '../models/driver.model';
 import { Ride } from '../models/ride.model';
 import { RideStatusEvent } from '../models/ride-status-event.model';
@@ -13,6 +15,8 @@ export class OperationsService {
     private readonly driverDao: DriverDao,
     private readonly rideDao: RideDao,
     private readonly catalog: CatalogService,
+    private readonly customers: CustomerProfileDao,
+    private readonly countries: CountryStamp,
   ) {}
 
   async board(date?: string) {
@@ -25,9 +29,11 @@ export class OperationsService {
       this.rideDao.findOpen(),
     ]);
     const openDriverIds = new Set(openRides.map((ride) => ride.driverId).filter((id): id is string => Boolean(id)));
+    await this.fillDriverCountries(fleet);
+    const people = await this.customerRows();
     const drivers = fleet
       .map((driver) => this.toDriver(driver, openDriverIds.has(driver.id)))
-      .sort((a, b) => Number(b.isOnline) - Number(a.isOnline) || a.fullName.localeCompare(b.fullName));
+      .sort((a, b) => this.byCountry(a.countryName, b.countryName) || a.fullName.localeCompare(b.fullName));
     const online = drivers.filter((driver) => driver.isOnline);
     const byVehicle = this.vehicleRollup(drivers, windowRides);
     const completed = windowRides.filter((ride) => ride.status === 'completed');
@@ -51,6 +57,7 @@ export class OperationsService {
       },
       byVehicle,
       drivers,
+      customers: people,
       rides: [...openRides, ...windowRides.filter((ride) => !OPEN.has(ride.status))].slice(0, 40).map((ride) => this.toRide(ride)),
     };
   }
@@ -64,9 +71,54 @@ export class OperationsService {
       isOnline: driver.isOnline,
       isAvailable: driver.isAvailable,
       onTrip,
+      countryIso: driver.countryIso,
+      countryName: driver.countryName,
       onlineSince: this.iso(driver.onlineSince),
       lastSeenAt: this.iso(driver.lastSeenAt),
     };
+  }
+
+  private async fillDriverCountries(fleet: Driver[]): Promise<void> {
+    for (const driver of fleet) {
+      if (driver.countryIso) continue;
+      const home = await this.countries.at(Number(driver.lat), Number(driver.lng), false);
+      if (!home) continue;
+      await this.driverDao.setCountry(driver.id, home.iso, home.name);
+      driver.countryIso = home.iso;
+      driver.countryName = home.name;
+    }
+  }
+
+  private async customerRows(): Promise<Array<{ id: string; fullName: string; countryIso: string | null; countryName: string | null }>> {
+    const profiles = await this.customers.list();
+    const rows = [];
+    for (const profile of profiles) {
+      if (!profile.countryIso) {
+        const ride = await this.rideDao.findLatestByCustomer(profile.userId);
+        if (ride) {
+          const home = await this.countries.at(Number(ride.pickupLat), Number(ride.pickupLng), false);
+          if (home) {
+            await this.customers.remember(profile.userId, undefined, home);
+            profile.countryIso = home.iso;
+            profile.countryName = home.name;
+          }
+        }
+      }
+      rows.push({
+        id: profile.id,
+        fullName: profile.fullName,
+        countryIso: profile.countryIso,
+        countryName: profile.countryName,
+      });
+    }
+    return rows.sort((a, b) => this.byCountry(a.countryName, b.countryName) || a.fullName.localeCompare(b.fullName));
+  }
+
+  private byCountry(a: string | null, b: string | null): number {
+    if (a === b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    return a.localeCompare(b);
   }
 
   private toRide(ride: Ride) {

@@ -69,7 +69,7 @@ function parseBody(value: string): unknown {
             <button class="ghost signout" type="button" (click)="logout()">Sign out</button>
           </div>
         </header>
-        <div class="sheet">
+        <div class="sheet" [class.can-scroll]="tab() !== 'home'">
           @if (tab() === 'home') {
             @if (!online()) {
               <section class="block">
@@ -202,16 +202,16 @@ function parseBody(value: string): unknown {
         height: 100%;
         display: flex;
         flex-direction: column;
-        gap: 18px;
-        padding: 28px 32px 16px;
+        gap: 12px;
+        padding: 16px 20px 12px;
         background: var(--panel);
         border-left: 1px solid var(--line);
         overflow: hidden;
       }
-      .hero { display: flex; align-items: center; gap: 14px; }
+      .hero { display: flex; align-items: center; gap: 12px; }
       .avatar {
-        width: 48px; height: 48px; border-radius: 16px; display: grid; place-items: center;
-        background: #243447; color: var(--accent); font-weight: 700; font-size: 20px; flex: none;
+        width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+        background: #243447; color: var(--accent); font-weight: 700; font-size: 18px; flex: none;
       }
       .who { min-width: 0; }
       .who h2 { margin: 0; font-size: 22px; }
@@ -223,21 +223,24 @@ function parseBody(value: string): unknown {
       .status i { width: 8px; height: 8px; border-radius: 50%; background: #66788a; display: block; }
       .status.live { color: var(--accent); }
       .status.live i { background: var(--accent); box-shadow: 0 0 0 4px rgba(61, 220, 151, 0.16); }
-      .sheet { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
-      .trip-card { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
-      .details { min-height: 0; overflow: auto; display: grid; gap: 12px; align-content: start; }
+      .sheet { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+      .sheet.can-scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: #3a4654 transparent; }
+      .sheet.can-scroll::-webkit-scrollbar { width: 8px; }
+      .sheet.can-scroll::-webkit-scrollbar-thumb { background: #3a4654; border-radius: 8px; }
+      .trip-card { flex: 1; grid-template-rows: auto auto; align-content: start; }
+      .details { display: grid; gap: 10px; align-content: start; }
       .actions {
         display: grid;
         gap: 8px;
-        padding-top: 8px;
+        padding-top: 4px;
         background: #12181f;
       }
-      .block { background: #12181f; border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
+      .block { background: #12181f; border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; }
       h3, p { margin: 0; }
       h3 { font-size: 14px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
       label { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }
       input:disabled { color: var(--text); opacity: 1; cursor: not-allowed; }
-      .stage { font-size: 20px; font-weight: 700; }
+      .stage { font-size: 18px; font-weight: 700; }
       a.nav {
         display: block;
         text-align: center;
@@ -250,7 +253,7 @@ function parseBody(value: string): unknown {
       }
       .fare { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
       .amount { text-align: right; }
-      .amount strong { display: block; font-size: 28px; line-height: 1.1; }
+      .amount strong { display: block; font-size: 24px; line-height: 1.1; }
       .steps { display: flex; gap: 8px; margin: 0; padding: 0; list-style: none; }
       .steps li { flex: 1; text-align: center; font-size: 12px; color: var(--muted); background: #1a2430; border-radius: 999px; padding: 6px 8px; }
       .steps li.on { color: #06281a; background: var(--accent); font-weight: 700; }
@@ -278,8 +281,16 @@ function parseBody(value: string): unknown {
       button:disabled { cursor: not-allowed; opacity: 0.55; }
       .err { color: #fff; background: var(--danger); padding: 10px 12px; border-radius: 10px; }
       @media (max-width: 980px) {
-        .layout { grid-template-columns: 1fr; grid-template-rows: 34vh minmax(0, 1fr); }
-        .panel { border-left: 0; border-top: 1px solid var(--line); padding: 16px; }
+        .layout { grid-template-columns: 1fr; grid-template-rows: 22vh minmax(0, 1fr); }
+        .panel { border-left: 0; border-top: 1px solid var(--line); padding: 12px 14px; }
+      }
+      @media (max-height: 760px) {
+        .panel { gap: 8px; padding: 10px 14px 8px; }
+        .avatar { width: 36px; height: 36px; font-size: 16px; }
+        .who h2, .today strong { font-size: 18px; }
+        .block { padding: 10px; gap: 8px; }
+        .stage { font-size: 16px; }
+        .amount strong { font-size: 20px; }
       }
     `,
   ],

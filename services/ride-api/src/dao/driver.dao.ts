@@ -56,6 +56,10 @@ export class DriverDao {
     await Driver.update({ isAvailable }, { where: { id } });
   }
 
+  async setCountry(id: string, iso: string, name: string): Promise<void> {
+    await Driver.update({ countryIso: iso, countryName: name }, { where: { id } });
+  }
+
   async setOffline(id: string): Promise<void> {
     await Driver.update({ isOnline: false, isAvailable: false, lastSeenAt: new Date() }, { where: { id } });
   }

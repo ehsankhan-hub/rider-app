@@ -19,6 +19,8 @@ export function createRideRouter(
 ): Router {
   const router = Router();
   router.get('/vehicle-types', rideController.vehicleTypes);
+  router.get('/places', placesController.search);
+  router.get('/places/reverse', placesController.reverse);
   router.use(authMiddleware);
   router.get('/config', catalogController.config);
   router.get('/admin/catalog', catalogController.adminCatalog);
@@ -35,11 +37,10 @@ export function createRideRouter(
   router.patch('/admin/currencies/:id', catalogController.updateCurrency);
   router.put('/admin/settings', catalogController.updateSettings);
   router.patch('/admin/vehicle-types/:id', catalogController.updateVehicle);
-  router.get('/places', placesController.search);
-  router.get('/places/reverse', placesController.reverse);
   router.get('/nearby-cars', nearbyCarsController.list);
   router.post('/quotes', rideController.quote);
   router.post('/rides', rideController.create);
+  router.post('/me/country', rideController.rememberCountry);
   router.get('/rides', rideController.list);
   router.get('/rides/:id', rideController.get);
   router.post('/rides/:id/cancel', rideController.cancel);

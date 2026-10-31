@@ -5,6 +5,7 @@ import { CustomerProfileDao } from '../dao/customer-profile.dao';
 import { PricingService } from './pricing.service';
 import { DispatchService } from './dispatch.service';
 import { CatalogService } from './catalog.service';
+import { CountryStamp } from './country-stamp';
 import { haversineKm } from './geo';
 import { confirmStopMessage, decideEnd, settleFare } from './ride-end';
 import { Driver } from '../models/driver.model';
@@ -36,7 +37,13 @@ export class RideService {
     private readonly rideEvents: RideEvents,
     private readonly catalogService: CatalogService,
     private readonly customers: CustomerProfileDao,
+    private readonly countries: CountryStamp,
   ) {}
+
+  async rememberCountry(userId: string, fullName: string | undefined, lat: number, lng: number): Promise<void> {
+    const home = await this.countries.at(lat, lng);
+    await this.customers.remember(userId, fullName, home);
+  }
 
   listVehicleTypes() {
     return this.vehicleTypeDao.findAllActive();
@@ -54,6 +61,8 @@ export class RideService {
 
     const quote = await this.pricingService.quote(input);
     if (input.riderName) await this.customers.saveName(userId, input.riderName);
+    const home = await this.countries.at(input.pickupLat, input.pickupLng);
+    await this.customers.remember(userId, input.riderName, home);
 
     const ride = await this.rideDao.create({
       customerUserId: userId,
