@@ -96,6 +96,7 @@ function parseBody(value: string): unknown {
             @if (online()) {
               @if (ride(); as trip) {
                 <section class="block trip-card">
+                  <div class="details">
                   <div class="fare">
                     <div>
                       <p class="stage">{{ stage(trip) }}</p>
@@ -119,23 +120,26 @@ function parseBody(value: string): unknown {
                     <span>Drop-off</span>
                     <b>{{ trip.dropoffAddress }}</b>
                   </div>
-                  <a class="nav" [href]="navHref(trip)" target="_blank" rel="noopener">{{ navLabel(trip) }}</a>
-                  @if (stopPrompt()) {
-                    <p class="hint">{{ stopPrompt() }}</p>
-                    <button type="button" (click)="confirmStop(trip)" [disabled]="busy()">Rider got out here</button>
-                    <button class="ghost" type="button" (click)="keepGoing()" [disabled]="busy()">Keep going</button>
-                  } @else if (passPrompt()) {
-                    <p class="hint">Pass this trip so another driver can take it?</p>
-                    <button type="button" (click)="pass(trip)" [disabled]="busy()">Pass trip</button>
-                    <button class="ghost" type="button" (click)="passPrompt.set(false)" [disabled]="busy()">Keep it</button>
-                  } @else {
-                    @if (nextAction(trip); as action) {
-                      <button type="button" (click)="advance(trip, action.status)" [disabled]="busy()">{{ action.label }}</button>
+                  </div>
+                  <div class="actions">
+                    <a class="nav" [href]="navHref(trip)" target="_blank" rel="noopener">{{ navLabel(trip) }}</a>
+                    @if (stopPrompt()) {
+                      <p class="hint">{{ stopPrompt() }}</p>
+                      <button type="button" (click)="confirmStop(trip)" [disabled]="busy()">Rider got out here</button>
+                      <button class="ghost" type="button" (click)="keepGoing()" [disabled]="busy()">Keep going</button>
+                    } @else if (passPrompt()) {
+                      <p class="hint">Pass this trip so another driver can take it?</p>
+                      <button type="button" (click)="pass(trip)" [disabled]="busy()">Pass trip</button>
+                      <button class="ghost" type="button" (click)="passPrompt.set(false)" [disabled]="busy()">Keep it</button>
+                    } @else {
+                      @if (nextAction(trip); as action) {
+                        <button type="button" (click)="advance(trip, action.status)" [disabled]="busy()">{{ action.label }}</button>
+                      }
+                      @if (trip.status === 'assigned' || trip.status === 'arriving') {
+                        <button class="ghost" type="button" (click)="passPrompt.set(true)" [disabled]="busy()">Pass trip</button>
+                      }
                     }
-                    @if (trip.status === 'assigned' || trip.status === 'arriving') {
-                      <button class="ghost" type="button" (click)="passPrompt.set(true)" [disabled]="busy()">Pass trip</button>
-                    }
-                  }
+                  </div>
                 </section>
                 <button class="ghost slim" type="button" (click)="goOffline()" [disabled]="busy()">Go offline</button>
               } @else {
@@ -194,6 +198,7 @@ function parseBody(value: string): unknown {
       .map { height: 100%; min-width: 0; }
       .panel {
         min-width: 0;
+        min-height: 0;
         height: 100%;
         display: flex;
         flex-direction: column;
@@ -218,7 +223,15 @@ function parseBody(value: string): unknown {
       .status i { width: 8px; height: 8px; border-radius: 50%; background: #66788a; display: block; }
       .status.live { color: var(--accent); }
       .status.live i { background: var(--accent); box-shadow: 0 0 0 4px rgba(61, 220, 151, 0.16); }
-      .sheet { flex: 1; overflow: auto; display: grid; gap: 14px; align-content: start; padding-right: 4px; }
+      .sheet { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+      .trip-card { flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+      .details { min-height: 0; overflow: auto; display: grid; gap: 12px; align-content: start; }
+      .actions {
+        display: grid;
+        gap: 8px;
+        padding-top: 8px;
+        background: #12181f;
+      }
       .block { background: #12181f; border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: grid; gap: 12px; }
       h3, p { margin: 0; }
       h3 { font-size: 14px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
