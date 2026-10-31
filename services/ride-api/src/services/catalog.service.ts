@@ -7,6 +7,7 @@ import { City, Country, State } from '../models/region.models';
 import { Currency } from '../models/currency.model';
 import { VehicleType } from '../models/vehicle-type.model';
 import { AppError } from '../utils/app-error';
+import { countryIsoAt, timezoneForCountry } from './service-area';
 
 export interface RuntimeConfig {
   currency: { code: string; symbol: string; name: string };
@@ -39,6 +40,20 @@ export class CatalogService {
     private readonly settings: SettingsDao,
     private readonly vehicleTypes: VehicleTypeDao,
   ) {}
+
+  /** Both countries stay open until an admin clears Active on that country. */
+  async assertServiceOpen(lat: number, lng: number): Promise<void> {
+    const iso = countryIsoAt(lat, lng);
+    if (!iso) return;
+    const country = await this.regions.findCountryByIso(iso);
+    if (country && !country.isActive) {
+      throw new AppError(403, `${country.name} is turned off`, 'COUNTRY_CLOSED');
+    }
+  }
+
+  timezoneAt(lat: number, lng: number, fallback: string): string {
+    return timezoneForCountry(countryIsoAt(lat, lng), fallback);
+  }
 
   async runtime(): Promise<RuntimeConfig> {
     const [city, currency, stored] = await Promise.all([

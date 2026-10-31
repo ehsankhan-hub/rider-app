@@ -3,6 +3,14 @@ import { Injectable } from '@angular/core';
 import { map } from 'rxjs';
 import { env } from './env';
 
+export interface PlaceHit {
+  id: string;
+  label: string;
+  lat: number;
+  lng: number;
+  region?: string;
+}
+
 export interface CityRecord {
   id: string;
   stateId: string;
@@ -115,6 +123,17 @@ export class AdminApiService {
 
   catalog() {
     return this.http.get<{ data: AdminCatalog }>(`${env.rideApi}/api/v1/admin/catalog`).pipe(map((r) => r.data));
+  }
+
+  searchPlaces(q: string, near?: { lat: number; lng: number }) {
+    const params = new URLSearchParams({ q, lang: 'en' });
+    if (near) {
+      params.set('lat', String(near.lat));
+      params.set('lng', String(near.lng));
+    }
+    return this.http
+      .get<{ data: PlaceHit[] }>(`${env.rideApi}/api/v1/places?${params}`)
+      .pipe(map((r) => r.data ?? []));
   }
 
   createCountry(body: { name: string; isoCode: string }) {

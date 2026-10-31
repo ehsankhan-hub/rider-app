@@ -40,6 +40,7 @@ export class DriverService {
   }
 
   async goOnline(userId: string, input: { lat: number; lng: number; fullName: string }) {
+    await this.catalog.assertServiceOpen(input.lat, input.lng);
     const existing = await this.driverDao.findByUserId(userId);
     if (!existing) {
       throw new AppError(409, 'Choose your vehicle when you create the driver account', 'VEHICLE_REQUIRED');

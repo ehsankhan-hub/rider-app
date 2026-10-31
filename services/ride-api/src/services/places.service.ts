@@ -7,6 +7,7 @@ export interface PlaceHit {
   lat: number;
   lng: number;
   distanceKm?: number;
+  region?: string;
 }
 
 interface RankedHit extends PlaceHit {
@@ -143,6 +144,7 @@ export class PlacesService {
       label,
       lat,
       lng,
+      region: address['state'] || undefined,
       name: name || label,
       kind: `${place.category ?? ''}=${place.type ?? ''}`,
     };
@@ -161,6 +163,7 @@ export class PlacesService {
       label,
       lat,
       lng,
+      region: attrs['Region'] || undefined,
       name: name || label,
       kind: this.esriKind(attrs['Addr_type'] ?? ''),
     };
@@ -200,7 +203,14 @@ export class PlacesService {
       if (seen.has(key)) continue;
       seen.add(key);
       const distanceKm = lat !== undefined && lng !== undefined ? Number(haversineKm(lat, lng, hit.lat, hit.lng).toFixed(1)) : undefined;
-      unique.push({ id: hit.id, label: hit.label, lat: hit.lat, lng: hit.lng, distanceKm });
+      unique.push({
+        id: hit.id,
+        label: hit.label,
+        lat: hit.lat,
+        lng: hit.lng,
+        distanceKm,
+        region: hit.region,
+      });
     }
     return unique.slice(0, 6);
   }

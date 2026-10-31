@@ -107,8 +107,8 @@ function parseBody(value: string): unknown {
                     </div>
                   </div>
                   <ol class="steps">
-                    <li [class.on]="trip.status === 'assigned'">To pickup</li>
-                    <li [class.on]="trip.status === 'arriving'">Arrived</li>
+                    <li [class.on]="trip.status === 'assigned' && !atPickup(trip)">To pickup</li>
+                    <li [class.on]="trip.status === 'arriving' || (trip.status === 'assigned' && atPickup(trip))">Arrived</li>
                     <li [class.on]="trip.status === 'in_progress'">On trip</li>
                   </ol>
                   <div class="stop pickup">
@@ -284,7 +284,6 @@ export class ShiftComponent implements OnDestroy {
   private routeKey = '';
   private selfMarker?: L.CircleMarker;
   private watchId = 0;
-  private servicePoint: { lat: number; lng: number; radiusKm: number } | null = null;
 
   summary = signal<DriverSummary | null>(null);
   tab = signal<'home' | 'earnings' | 'account'>('home');
@@ -330,25 +329,7 @@ export class ShiftComponent implements OnDestroy {
       this.zone.run(() => this.placeSelf(event.latlng.lat, event.latlng.lng));
     });
     setTimeout(() => this.map?.invalidateSize(), 50);
-    this.api.runtime().subscribe({
-      next: (config) => {
-        this.servicePoint = {
-          lat: config.city.lat,
-          lng: config.city.lng,
-          radiusKm: config.assignRadiusKm,
-        };
-        const pin = this.here();
-        if (!pin || this.outsideService(pin.lat, pin.lng)) {
-          this.placeSelf(config.city.lat, config.city.lng);
-        }
-      },
-    });
     this.readGps((lat, lng) => {
-      if (this.outsideService(lat, lng)) {
-        const city = this.servicePoint;
-        if (city && !this.here()) this.placeSelf(city.lat, city.lng);
-        return;
-      }
       if (!this.here()) this.placeSelf(lat, lng);
     });
     this.api.connect();
@@ -371,11 +352,21 @@ export class ShiftComponent implements OnDestroy {
   }
 
   nextAction(trip: DriverRide) {
+    if (trip.status === 'assigned' && this.atPickup(trip)) {
+      return { status: 'in_progress' as const, label: 'Start trip' };
+    }
     return NEXT[trip.status] ?? null;
   }
 
   stage(trip: DriverRide): string {
+    if (trip.status === 'assigned' && this.atPickup(trip)) return 'Waiting for the rider';
     return STAGE[trip.status] ?? trip.status;
+  }
+
+  atPickup(trip: DriverRide): boolean {
+    const here = this.here();
+    if (!here) return false;
+    return this.apartKm(here.lat, here.lng, Number(trip.pickupLat), Number(trip.pickupLng)) <= 0.3;
   }
 
   firstName(trip: DriverRide): string {
@@ -475,15 +466,9 @@ export class ShiftComponent implements OnDestroy {
 
   goOnline(): void {
     const point = this.here();
-    const city = this.servicePoint;
     this.error.set('');
-    if (point && !this.outsideService(point.lat, point.lng)) {
+    if (point) {
       this.startShift(point.lat, point.lng);
-      return;
-    }
-    if (city) {
-      this.placeSelf(city.lat, city.lng);
-      this.startShift(city.lat, city.lng);
       return;
     }
     this.busy.set(true);
@@ -524,6 +509,28 @@ export class ShiftComponent implements OnDestroy {
     this.error.set('');
     if (status === 'completed') {
       this.finish(trip, false);
+      return;
+    }
+    if (status === 'in_progress' && trip.status === 'assigned') {
+      this.busy.set(true);
+      this.api.setStatus(trip.id, 'arriving').subscribe({
+        next: () => {
+          this.api.setStatus(trip.id, 'in_progress').subscribe({
+            next: (updated) => {
+              this.ride.set(updated);
+              this.busy.set(false);
+            },
+            error: (err: { error?: { error?: { message?: string; code?: string } } }) => {
+              this.error.set(failureReason(err, 'Could not update the trip'));
+              this.busy.set(false);
+            },
+          });
+        },
+        error: (err: { error?: { error?: { message?: string; code?: string } } }) => {
+          this.error.set(failureReason(err, 'Could not update the trip'));
+          this.busy.set(false);
+        },
+      });
       return;
     }
     this.busy.set(true);
@@ -599,19 +606,6 @@ export class ShiftComponent implements OnDestroy {
       });
   }
 
-  private outsideService(lat: number, lng: number): boolean {
-    const city = this.servicePoint;
-    if (!city) return false;
-    const toRad = (value: number) => (value * Math.PI) / 180;
-    const dLat = toRad(city.lat - lat);
-    const dLng = toRad(city.lng - lng);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat)) * Math.cos(toRad(city.lat)) * Math.sin(dLng / 2) ** 2;
-    const km = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return km > city.radiusKm;
-  }
-
   private readGps(onFix: (lat: number, lng: number) => void, onFail?: (blocked: boolean) => void): void {
     if (!this.secure || !navigator.geolocation) {
       onFail?.(true);
@@ -643,7 +637,6 @@ export class ShiftComponent implements OnDestroy {
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
         this.zone.run(() => {
-          if (this.outsideService(pos.coords.latitude, pos.coords.longitude)) return;
           this.placeSelf(pos.coords.latitude, pos.coords.longitude);
         });
       },

@@ -360,7 +360,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   focusedField = signal<PointField | null>(null);
   locating = signal(false);
   private pickupFromUser = false;
-  private serviceCity: { lat: number; lng: number; label: string; radiusKm: number } | null = null;
+  private serviceCity: { lat: number; lng: number; label: string } | null = null;
   nearbyCars = signal<NearbyCar[]>([]);
 
   vehicleTypeId = '';
@@ -409,7 +409,6 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
           lat: config.city.lat,
           lng: config.city.lng,
           label: label || config.city.name,
-          radiusKm: config.assignRadiusKm,
         };
         if (!this.pickupFromUser) this.placeAtServiceCity();
         this.useCurrentLocation();
@@ -645,22 +644,6 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.reverseInto('pickup', latlng);
   }
 
-  private outsideServiceCity(lat: number, lng: number): boolean {
-    const city = this.serviceCity;
-    if (!city) return false;
-    return this.kmBetween(lat, lng, city.lat, city.lng) > city.radiusKm;
-  }
-
-  private kmBetween(lat1: number, lng1: number, lat2: number, lng2: number): number {
-    const toRad = (value: number) => (value * Math.PI) / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLng = toRad(lng2 - lng1);
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-    return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-
   private useCurrentLocation(): void {
     if (!navigator.geolocation) {
       this.placeAtServiceCity();
@@ -677,7 +660,6 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
           this.setPoint('pickup', latlng, this.t('currentLocation'));
           this.map.setView(latlng, 15);
           this.reverseInto('pickup', latlng);
-          if (this.outsideServiceCity(latitude, longitude)) this.show(this.t('outsideCity'), 'info');
         });
       },
       () => this.zone.run(() => {

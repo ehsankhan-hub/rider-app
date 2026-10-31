@@ -16,6 +16,10 @@ export class RegionDao {
     return Country.findByPk(id);
   }
 
+  findCountryByIso(isoCode: string): Promise<Country | null> {
+    return Country.findOne({ where: { isoCode } });
+  }
+
   findState(id: string): Promise<State | null> {
     return State.findByPk(id);
   }

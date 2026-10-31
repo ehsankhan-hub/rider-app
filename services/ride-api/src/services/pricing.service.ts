@@ -67,9 +67,11 @@ export class PricingService {
       throw new AppError(404, 'Vehicle type not found', 'VEHICLE_TYPE_NOT_FOUND');
     }
 
+    await this.catalogService.assertServiceOpen(input.pickupLat, input.pickupLng);
     const route = await this.routeService.driving(input.pickupLat, input.pickupLng, input.dropoffLat, input.dropoffLng);
     const runtime = await this.catalogService.runtime();
-    const traffic = trafficProfile(new Date(), runtime.city.timezone, runtime.weekendDays);
+    const zone = this.catalogService.timezoneAt(input.pickupLat, input.pickupLng, runtime.city.timezone);
+    const traffic = trafficProfile(new Date(), zone, runtime.weekendDays);
     const durationMin = Math.max(4, route.freeFlowMin * traffic.durationFactor);
     const base = Number(vt.baseFare);
     const distanceCharge = route.distanceKm * Number(vt.perKm);
