@@ -9,6 +9,8 @@ export interface PlaceHit {
   lat: number;
   lng: number;
   region?: string;
+  country?: string;
+  countryCode?: string;
 }
 
 export interface CityRecord {

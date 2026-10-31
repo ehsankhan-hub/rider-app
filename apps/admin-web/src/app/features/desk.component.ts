@@ -120,6 +120,16 @@ function timezoneForPoint(lat: number, lng: number, fallback: string): string {
                     </ul>
                   }
                 </label>
+                <label class="suggest-wrap">Country
+                  <input [ngModel]="countryCityDraft(country).country" (ngModelChange)="onCountryType('city-' + country.id, countryCityDraft(country), $event)" (blur)="hideCountries()" placeholder="Type a country" autocomplete="off" />
+                  @if (countryKey === 'city-' + country.id && countryHits().length) {
+                    <ul class="suggest">
+                      @for (item of countryHits(); track item.id) {
+                        <li><button type="button" (mousedown)="chooseCountry(countryCityDraft(country), item)">{{ item.name }} · {{ item.isoCode }}</button></li>
+                      }
+                    </ul>
+                  }
+                </label>
                 <label>Region <input [(ngModel)]="countryCityDraft(country).region" /></label>
                 <label>Timezone <input [(ngModel)]="countryCityDraft(country).timezone" /></label>
                 <label>Latitude <input [(ngModel)]="countryCityDraft(country).lat" /></label>
@@ -136,7 +146,16 @@ function timezoneForPoint(lat: number, lng: number, fallback: string): string {
 
           <h2>Add a country</h2>
           <div class="grid">
-            <label>Name <input [(ngModel)]="newCountry.name" /></label>
+            <label class="suggest-wrap">Name
+              <input [ngModel]="newCountry.name" (ngModelChange)="onNewCountryType($event)" (blur)="hideCountries()" placeholder="Type a country" autocomplete="off" />
+              @if (countryKey === 'new-country' && countryHits().length) {
+                <ul class="suggest">
+                  @for (item of countryHits(); track item.id) {
+                    <li><button type="button" (mousedown)="chooseNewCountry(item)">{{ item.name }} · {{ item.isoCode }}</button></li>
+                  }
+                </ul>
+              }
+            </label>
             <label>ISO <input [(ngModel)]="newCountry.isoCode" maxlength="2" /></label>
             <button type="button" (click)="addCountry()" [disabled]="busy()">Add country</button>
           </div>
@@ -249,11 +268,14 @@ export class DeskComponent implements OnInit {
 
   newCountry = { name: '', isoCode: '' };
   private readonly regionDrafts = new Map<string, { name: string }>();
-  private readonly cityDrafts = new Map<string, { name: string; region: string; timezone: string; lat: string; lng: string }>();
+  private readonly cityDrafts = new Map<string, { name: string; country: string; countryCode: string; region: string; timezone: string; lat: string; lng: string }>();
   newCurrency = { code: '', symbol: '', name: '' };
   placeHits = signal<PlaceHit[]>([]);
   placeKey = '';
+  countryHits = signal<Array<{ id: string; name: string; isoCode: string }>>([]);
+  countryKey = '';
   private placeTimer = 0;
+  private countryTimer = 0;
 
   ngOnInit(): void {
     this.load();
@@ -333,12 +355,14 @@ export class DeskComponent implements OnInit {
     return created;
   }
 
-  countryCityDraft(country: CountryRecord): { name: string; region: string; timezone: string; lat: string; lng: string } {
+  countryCityDraft(country: CountryRecord): { name: string; country: string; countryCode: string; region: string; timezone: string; lat: string; lng: string } {
     const existing = this.cityDrafts.get(country.id);
     if (existing) return existing;
     const india = country.name === 'India' || country.isoCode.toUpperCase() === 'IN';
     const created = {
       name: '',
+      country: '',
+      countryCode: '',
       region: '',
       timezone: india ? 'Asia/Kolkata' : 'Asia/Riyadh',
       lat: '',
@@ -350,7 +374,7 @@ export class DeskComponent implements OnInit {
 
   onCityType(
     key: string,
-    target: { name: string; lat: string; lng: string; timezone: string; region?: string },
+    target: { name: string; lat: string; lng: string; timezone: string; region?: string; country?: string; countryCode?: string },
     value: string,
     country: CountryRecord,
   ): void {
@@ -366,7 +390,7 @@ export class DeskComponent implements OnInit {
     target.lng = '';
     if (target.region !== undefined) target.region = '';
     this.placeTimer = window.setTimeout(() => {
-      const query = country.name ? `${typed}, ${country.name}` : typed;
+      const query = typed;
       this.api.searchPlaces(query).subscribe({
         next: (hits) => {
           if (this.placeKey !== key) return;
@@ -386,7 +410,101 @@ export class DeskComponent implements OnInit {
     }, 300);
   }
 
-  choosePlace(target: { name: string; lat: string; lng: string; timezone: string; region?: string }, hit: PlaceHit): void {
+  onCountryType(key: string, draft: { country: string; countryCode: string }, value: string): void {
+    this.applyCountryQuery(key, value, (chosen) => {
+      draft.country = chosen?.name ?? value;
+      draft.countryCode = chosen?.isoCode ?? '';
+    });
+  }
+
+  onNewCountryType(value: string): void {
+    this.applyCountryQuery('new-country', value, (chosen) => {
+      this.newCountry.name = chosen?.name ?? value;
+      this.newCountry.isoCode = chosen?.isoCode ?? '';
+    });
+  }
+
+  chooseCountry(draft: { country: string; countryCode: string }, item: { name: string; isoCode: string }): void {
+    draft.country = item.name;
+    draft.countryCode = item.isoCode;
+    this.countryHits.set([]);
+    this.countryKey = '';
+  }
+
+  chooseNewCountry(item: { name: string; isoCode: string }): void {
+    this.newCountry.name = item.name;
+    this.newCountry.isoCode = item.isoCode;
+    this.countryHits.set([]);
+    this.countryKey = '';
+  }
+
+  hideCountries(): void {
+    window.setTimeout(() => {
+      this.countryHits.set([]);
+      this.countryKey = '';
+    }, 200);
+  }
+
+  private applyCountryQuery(key: string, value: string, apply: (chosen: { name: string; isoCode: string } | null) => void): void {
+    this.countryKey = key;
+    window.clearTimeout(this.countryTimer);
+    const typed = value.trim();
+    const local = this.matchCountries(typed);
+    this.countryHits.set(local);
+    const chosen = this.bestCountry(typed, local);
+    if (chosen || typed.length < 2) {
+      apply(chosen);
+      return;
+    }
+    apply(null);
+    this.countryTimer = window.setTimeout(() => {
+      this.api.searchPlaces(typed).subscribe({
+        next: (hits) => {
+          if (this.countryKey !== key) return;
+          const remote = this.countriesFromPlaces(typed, hits);
+          const shown = remote.length ? remote : local;
+          this.countryHits.set(shown);
+          apply(this.bestCountry(typed, shown));
+        },
+      });
+    }, 300);
+  }
+
+  private matchCountries(typed: string): Array<{ id: string; name: string; isoCode: string }> {
+    const needle = typed.trim().toLowerCase();
+    if (!needle) return [];
+    return this.countries()
+      .filter((item) => item.name.toLowerCase().includes(needle) || item.isoCode.toLowerCase().startsWith(needle))
+      .map((item) => ({ id: item.id, name: item.name, isoCode: item.isoCode }));
+  }
+
+  private countriesFromPlaces(typed: string, hits: PlaceHit[]): Array<{ id: string; name: string; isoCode: string }> {
+    const needle = typed.trim().toLowerCase();
+    const seen = new Set<string>();
+    const found: Array<{ id: string; name: string; isoCode: string }> = [];
+    for (const hit of hits) {
+      const name = hit.country?.trim();
+      const isoCode = hit.countryCode?.trim().toUpperCase();
+      if (!name || !isoCode || seen.has(isoCode)) continue;
+      if (!name.toLowerCase().includes(needle) && !isoCode.toLowerCase().startsWith(needle)) continue;
+      seen.add(isoCode);
+      found.push({ id: isoCode, name, isoCode });
+    }
+    return found;
+  }
+
+  private bestCountry(typed: string, list: Array<{ name: string; isoCode: string }>): { name: string; isoCode: string } | null {
+    const needle = typed.trim().toLowerCase();
+    if (needle.length < 2 || list.length === 0) return null;
+    return (
+      list.find((item) => item.name.toLowerCase() === needle || item.isoCode.toLowerCase() === needle) ??
+      (list.filter((item) => item.name.toLowerCase().startsWith(needle)).length === 1
+        ? list.find((item) => item.name.toLowerCase().startsWith(needle)) ?? null
+        : null)
+    );
+  }
+
+  choosePlace(target: { name: string; lat: string; lng: string; timezone: string; region?: string; country?: string; countryCode?: string }, hit: PlaceHit): void {
     target.name = this.shortName(hit);
     this.fillPoint(target, hit);
     this.placeHits.set([]);
@@ -400,25 +518,38 @@ export class DeskComponent implements OnInit {
     }, 200);
   }
 
-  private fillPoint(target: { lat: string; lng: string; timezone: string; region?: string }, hit: PlaceHit): void {
+  private fillPoint(target: { lat: string; lng: string; timezone: string; region?: string; country?: string; countryCode?: string }, hit: PlaceHit): void {
     target.lat = hit.lat.toFixed(7);
     target.lng = hit.lng.toFixed(7);
     target.timezone = timezoneForPoint(hit.lat, hit.lng, target.timezone);
     if (target.region !== undefined && hit.region) target.region = hit.region;
+    if (target.country !== undefined && hit.country) target.country = hit.country;
+    if (target.countryCode !== undefined && hit.countryCode) target.countryCode = hit.countryCode;
   }
 
   private shortName(hit: PlaceHit): string {
     return hit.label.split(',')[0]?.trim() || hit.label;
   }
 
+  private countryForDraft(draft: { country: string; countryCode: string }): CountryRecord | undefined {
+    const code = draft.countryCode.trim().toUpperCase();
+    const name = draft.country.trim().toLowerCase();
+    return this.countries().find((item) => (code && item.isoCode.toUpperCase() === code) || item.name.trim().toLowerCase() === name);
+  }
+
   addCity(country: CountryRecord): void {
     const draft = this.countryCityDraft(country);
     const regionName = draft.region.trim();
-    if (!draft.name.trim() || !regionName || !draft.lat || !draft.lng) {
-      this.error.set('Type a city and wait until the region and map point fill in');
+    const home = this.countryForDraft(draft) ?? country;
+    if (!draft.name.trim() || !draft.country.trim() || !regionName || !draft.lat || !draft.lng) {
+      this.error.set('Type a city and wait until the country, region, and map point fill in');
       return;
     }
-    const existing = this.statesInCountry(country.id).find((state) => state.name.toLowerCase() === regionName.toLowerCase());
+    if (!this.countryForDraft(draft)) {
+      this.error.set(`Add the country ${draft.country} first, then add the city`);
+      return;
+    }
+    const existing = this.statesInCountry(home.id).find((state) => state.name.toLowerCase() === regionName.toLowerCase());
     if (existing) {
       this.createCityIn(existing.id, draft);
       return;
@@ -426,13 +557,13 @@ export class DeskComponent implements OnInit {
     this.busy.set(true);
     this.error.set('');
     this.notice.set('');
-    this.api.createState({ countryId: country.id, name: regionName }).subscribe({
+    this.api.createState({ countryId: home.id, name: regionName }).subscribe({
       next: () => {
         this.api.catalog().subscribe({
           next: (catalog) => {
             const created = (catalog.countries ?? [])
               .flatMap((item) => item.states ?? [])
-              .find((state) => state.countryId === country.id && state.name.toLowerCase() === regionName.toLowerCase());
+              .find((state) => state.countryId === home.id && state.name.toLowerCase() === regionName.toLowerCase());
             if (!created) {
               this.error.set('The region was added, but the city was not');
               this.busy.set(false);
@@ -562,6 +693,8 @@ export class DeskComponent implements OnInit {
         for (const draft of this.regionDrafts.values()) draft.name = '';
         for (const draft of this.cityDrafts.values()) {
           draft.name = '';
+          draft.country = '';
+          draft.countryCode = '';
           draft.region = '';
           draft.lat = '';
           draft.lng = '';

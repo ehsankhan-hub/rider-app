@@ -8,6 +8,8 @@ export interface PlaceHit {
   lng: number;
   distanceKm?: number;
   region?: string;
+  country?: string;
+  countryCode?: string;
 }
 
 interface RankedHit extends PlaceHit {
@@ -102,7 +104,7 @@ export class PlacesService {
     url.searchParams.set('f', 'json');
     url.searchParams.set('singleLine', input.q);
     url.searchParams.set('maxLocations', '8');
-    url.searchParams.set('outFields', 'Addr_type,PlaceName,City,Region,StAddr');
+    url.searchParams.set('outFields', 'Addr_type,PlaceName,City,Region,Country,StAddr');
     url.searchParams.set('langCode', input.lang);
     if (input.lat !== undefined && input.lng !== undefined) {
       url.searchParams.set('location', `${input.lng},${input.lat}`);
@@ -145,6 +147,8 @@ export class PlacesService {
       lat,
       lng,
       region: address['state'] || undefined,
+      country: address['country'] || undefined,
+      countryCode: address['country_code']?.toUpperCase() || undefined,
       name: name || label,
       kind: `${place.category ?? ''}=${place.type ?? ''}`,
     };
@@ -164,6 +168,7 @@ export class PlacesService {
       lat,
       lng,
       region: attrs['Region'] || undefined,
+      country: attrs['Country'] || undefined,
       name: name || label,
       kind: this.esriKind(attrs['Addr_type'] ?? ''),
     };
@@ -210,6 +215,8 @@ export class PlacesService {
         lng: hit.lng,
         distanceKm,
         region: hit.region,
+        country: hit.country,
+        countryCode: hit.countryCode,
       });
     }
     return unique.slice(0, 6);
