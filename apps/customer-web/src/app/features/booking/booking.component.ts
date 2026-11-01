@@ -273,6 +273,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
       :host { display: block; height: 100%; min-height: 0; }
       .stage { position: relative; height: 100%; min-height: 0; }
       .map { position: absolute; inset: 0; z-index: 1; }
+      :host ::ng-deep .car-icon { background: transparent; border: 0; }
       .pin {
         position: absolute;
         left: 50%;
@@ -443,14 +444,18 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   private pickupMarker?: L.CircleMarker;
   private dropoffMarker?: L.CircleMarker;
   private routeLine?: L.Polyline;
-  private carMarkers: L.Marker[] = [];
+  private carMarkers = new Map<string, L.Marker>();
+  private carHeads = new Map<string, { lat: number; lng: number; heading: number }>();
   private driverMarker?: L.Marker;
   private activeRideId: string | null = null;
   private searchTimer?: ReturnType<typeof setTimeout>;
   private carsTimer?: ReturnType<typeof setTimeout>;
+  private carsPoll?: ReturnType<typeof setInterval>;
   private searchSeq = 0;
   private quoteSeq = 0;
   private userDragging = false;
+  private keepView = false;
+  private framedCars = false;
   private pickupRev = 0;
   private dropoffRev = 0;
   private lastPointAt = 0;
@@ -510,6 +515,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.map.on('dragstart', () => {
       this.zone.run(() => {
         this.userDragging = true;
+        this.keepView = true;
       });
     });
     this.map.on('moveend', () => {
@@ -522,16 +528,15 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
           if (!at) return;
           this.pickupFromUser = true;
           this.pickupPoint.set(at);
-          this.queueNearby(at.lat, at.lng);
+          this.queueNearby();
           this.reverseInto('pickup', at);
           return;
         }
         this.userDragging = false;
-        if (this.pickupPoint()) return;
-        const mapCenter = this.map.getCenter();
-        this.queueNearby(mapCenter.lat, mapCenter.lng);
+        this.queueNearby();
       });
     });
+    this.carsPoll = setInterval(() => this.queueNearby(), 5000);
     setTimeout(() => this.map?.invalidateSize(), 50);
     this.api.runtime().subscribe({
       next: (config) => {
@@ -569,6 +574,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     clearTimeout(this.searchTimer);
     clearTimeout(this.carsTimer);
+    clearInterval(this.carsPoll);
     this.map?.remove();
   }
 
@@ -934,7 +940,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         fillOpacity: 0.95,
         pane: 'points',
       }).addTo(this.map);
-      this.queueNearby(latlng.lat, latlng.lng);
+      this.queueNearby();
     } else {
       this.dropoffPoint.set(latlng);
       this.dropoffQuery.set(label);
@@ -998,41 +1004,120 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private queueNearby(lat: number, lng: number): void {
+  private queueNearby(): void {
     clearTimeout(this.carsTimer);
-    this.carsTimer = setTimeout(() => {
-      this.api.nearbyCars(lat, lng).subscribe({
-        next: (cars) => {
-          this.nearbyCars.set(cars);
-          this.drawCars(cars);
-        },
-      });
-    }, 200);
+    this.carsTimer = setTimeout(() => this.refreshCars(), 200);
+  }
+
+  private refreshCars(): void {
+    const map = this.map;
+    if (!map) return;
+    const at = this.pickupPoint() ?? map.getCenter();
+    this.api.nearbyCars(at.lat, at.lng).subscribe({
+      next: (cars) => {
+        this.nearbyCars.set(cars);
+        this.drawCars(cars);
+        this.frameCars(cars);
+        this.drawCars(cars);
+      },
+    });
+  }
+
+  private frameCars(cars: NearbyCar[]): void {
+    const map = this.map;
+    const pickup = this.pickupPoint();
+    if (!map || !pickup || this.keepView || this.framedCars || this.dropoffPoint() || cars.length === 0) return;
+    const bounds = L.latLngBounds([pickup]);
+    for (const car of cars) bounds.extend([car.lat, car.lng]);
+    const bottom = Math.round(map.getSize().y * 0.42);
+    map.fitBounds(bounds, {
+      paddingTopLeft: L.point(48, 56),
+      paddingBottomRight: L.point(48, bottom),
+      maxZoom: 15,
+    });
+    this.framedCars = true;
   }
 
   private drawCars(cars: NearbyCar[]): void {
     if (!this.map) return;
-    for (const marker of this.carMarkers) marker.remove();
-    this.carMarkers = cars.map((car) =>
-      L.marker([car.lat, car.lng], {
-        icon: this.carIcon(car),
-        interactive: false,
-        keyboard: false,
-      }).addTo(this.map!),
-    );
+    const spots = this.spread(cars);
+    const seen = new Set<string>();
+    for (const car of cars) {
+      seen.add(car.id);
+      const heading = this.headingFor(car);
+      const at = spots.get(car.id) ?? L.latLng(car.lat, car.lng);
+      const existing = this.carMarkers.get(car.id);
+      if (existing) {
+        existing.setLatLng(at);
+        existing.setIcon(this.carIcon(heading, car.vehicleCode));
+        continue;
+      }
+      this.carMarkers.set(
+        car.id,
+        L.marker(at, {
+          icon: this.carIcon(heading, car.vehicleCode),
+          interactive: false,
+          keyboard: false,
+          zIndexOffset: 500,
+        }).addTo(this.map),
+      );
+    }
+    for (const [id, marker] of this.carMarkers) {
+      if (seen.has(id)) continue;
+      marker.remove();
+      this.carMarkers.delete(id);
+      this.carHeads.delete(id);
+    }
   }
 
-  private carIcon(car: NearbyCar): L.DivIcon {
-    const color = CAR_COLOR[car.vehicleCode];
+  private spread(cars: NearbyCar[]): Map<string, L.LatLng> {
+    const placed = new Map<string, L.LatLng>();
+    const groups = new Map<string, NearbyCar[]>();
+    for (const car of cars) {
+      const key = `${car.lat.toFixed(3)},${car.lng.toFixed(3)}`;
+      const list = groups.get(key) ?? [];
+      list.push(car);
+      groups.set(key, list);
+    }
+    for (const group of groups.values()) {
+      group.forEach((car, index) => {
+        const real = L.latLng(car.lat, car.lng);
+        if (!this.map || group.length < 2) {
+          placed.set(car.id, real);
+          return;
+        }
+        const angle = (2 * Math.PI * index) / group.length - Math.PI / 2;
+        const origin = this.map.project(real, this.map.getZoom());
+        const shifted = origin.add([Math.cos(angle) * 28, Math.sin(angle) * 28]);
+        placed.set(car.id, this.map.unproject(shifted, this.map.getZoom()));
+      });
+    }
+    return placed;
+  }
+
+  private headingFor(car: NearbyCar): number {
+    const prev = this.carHeads.get(car.id);
+    let heading = prev?.heading ?? car.heading;
+    if (prev) {
+      const dLat = car.lat - prev.lat;
+      const dLng = car.lng - prev.lng;
+      if (Math.hypot(dLat, dLng) > 0.00004) heading = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+    }
+    this.carHeads.set(car.id, { lat: car.lat, lng: car.lng, heading });
+    return heading;
+  }
+
+  private carIcon(heading: number, code: NearbyCar['vehicleCode']): L.DivIcon {
+    const color = CAR_COLOR[code];
     return L.divIcon({
       className: 'car-icon',
-      iconSize: [28, 28],
-      iconAnchor: [14, 14],
-      html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
-        <g transform="rotate(${car.heading} 14 14)">
-          <rect x="8" y="3" width="12" height="22" rx="4" fill="${color}" stroke="#0f1419" stroke-width="1.5"/>
-          <rect x="10" y="6" width="8" height="5" rx="1.2" fill="#f4f7fb"/>
-          <rect x="10" y="15" width="8" height="4" rx="1" fill="#f4f7fb"/>
+      iconSize: [22, 36],
+      iconAnchor: [11, 18],
+      html: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="36" viewBox="0 0 22 36">
+        <g transform="rotate(${heading} 11 18)">
+          <rect x="2.5" y="1.5" width="17" height="33" rx="7" fill="${color}" stroke="#101820" stroke-width="1.4"/>
+          <rect x="5" y="6" width="12" height="8" rx="2" fill="#1c2430"/>
+          <rect x="5" y="20" width="12" height="7" rx="1.6" fill="#f7f8fa"/>
         </g>
       </svg>`,
     });

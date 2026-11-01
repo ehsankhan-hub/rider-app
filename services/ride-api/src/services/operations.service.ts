@@ -28,11 +28,14 @@ export class OperationsService {
       this.rideDao.findCreatedBetween(from, to),
       this.rideDao.findOpen(),
     ]);
-    const openDriverIds = new Set(openRides.map((ride) => ride.driverId).filter((id): id is string => Boolean(id)));
+    const openByDriver = new Map<string, Ride>();
+    for (const ride of openRides) {
+      if (ride.driverId && !openByDriver.has(ride.driverId)) openByDriver.set(ride.driverId, ride);
+    }
     await this.fillDriverCountries(fleet);
     const people = await this.customerRows();
     const drivers = fleet
-      .map((driver) => this.toDriver(driver, openDriverIds.has(driver.id)))
+      .map((driver) => this.toDriver(driver, openByDriver.get(driver.id) ?? null))
       .sort((a, b) => this.byCountry(a.countryName, b.countryName) || a.fullName.localeCompare(b.fullName));
     const online = drivers.filter((driver) => driver.isOnline);
     const byVehicle = this.vehicleRollup(drivers, windowRides);
@@ -62,7 +65,7 @@ export class OperationsService {
     };
   }
 
-  private toDriver(driver: Driver, onTrip: boolean) {
+  private toDriver(driver: Driver, ride: Ride | null) {
     return {
       id: driver.id,
       fullName: driver.fullName,
@@ -70,11 +73,25 @@ export class OperationsService {
       vehicleName: driver.vehicleType?.displayName ?? '',
       isOnline: driver.isOnline,
       isAvailable: driver.isAvailable,
-      onTrip,
+      onTrip: Boolean(ride),
+      lat: Number(driver.lat),
+      lng: Number(driver.lng),
       countryIso: driver.countryIso,
       countryName: driver.countryName,
       onlineSince: this.iso(driver.onlineSince),
       lastSeenAt: this.iso(driver.lastSeenAt),
+      trip: ride
+        ? {
+            id: ride.id,
+            status: ride.status,
+            pickupAddress: ride.pickupAddress,
+            dropoffAddress: ride.dropoffAddress,
+            pickupLat: Number(ride.pickupLat),
+            pickupLng: Number(ride.pickupLng),
+            dropoffLat: Number(ride.dropoffLat),
+            dropoffLng: Number(ride.dropoffLng),
+          }
+        : null,
     };
   }
 

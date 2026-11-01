@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { AdminApiService, CityRecord, CountryRecord, CurrencyRecord, PlaceHit, StateRecord, VehicleRecord } from '../core/admin-api.service';
 import { SessionService } from '../core/session.service';
 import { LiveComponent } from './live.component';
+import { MonitorComponent } from './monitor.component';
 
 interface CityRow extends CityRecord {
   stateName: string;
@@ -24,7 +25,7 @@ function timezoneForPoint(lat: number, lng: number, fallback: string): string {
 @Component({
   selector: 'app-desk',
   standalone: true,
-  imports: [FormsModule, LiveComponent],
+  imports: [FormsModule, LiveComponent, MonitorComponent],
   template: `
     <main>
       <header class="row">
@@ -36,6 +37,7 @@ function timezoneForPoint(lat: number, lng: number, fallback: string): string {
       </header>
       <nav class="tabs">
         <button type="button" [class.ghost]="section() !== 'live'" (click)="section.set('live')">Live</button>
+        <button type="button" title="Where drivers are" [class.ghost]="section() !== 'watch'" (click)="section.set('watch')">Monitor</button>
         <button type="button" [class.ghost]="section() !== 'area'" (click)="section.set('area')">Places</button>
         <button type="button" [class.ghost]="section() !== 'money'" (click)="section.set('money')">Currency</button>
         <button type="button" [class.ghost]="section() !== 'fares'" (click)="section.set('fares')">Fares</button>
@@ -45,6 +47,10 @@ function timezoneForPoint(lat: number, lng: number, fallback: string): string {
 
       @if (section() === 'live') {
         <app-live />
+      }
+
+      @if (section() === 'watch') {
+        <app-monitor />
       }
 
       @if (section() === 'area') {
@@ -253,7 +259,7 @@ export class DeskComponent implements OnInit {
   private readonly session = inject(SessionService);
   private readonly router = inject(Router);
 
-  section = signal<'live' | 'area' | 'money' | 'fares'>('live');
+  section = signal<'live' | 'watch' | 'area' | 'money' | 'fares'>('live');
   busy = signal(false);
   error = signal('');
   notice = signal('');

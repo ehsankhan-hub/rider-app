@@ -84,10 +84,22 @@ export interface OperationsBoard {
     isOnline: boolean;
     isAvailable: boolean;
     onTrip: boolean;
+    lat: number;
+    lng: number;
     countryIso: string | null;
     countryName: string | null;
     onlineSince: string | null;
     lastSeenAt: string | null;
+    trip: {
+      id: string;
+      status: string;
+      pickupAddress: string;
+      dropoffAddress: string;
+      pickupLat: number;
+      pickupLng: number;
+      dropoffLat: number;
+      dropoffLng: number;
+    } | null;
   }>;
   customers: Array<{
     id: string;

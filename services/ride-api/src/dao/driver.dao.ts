@@ -11,7 +11,7 @@ export class DriverDao {
 
   findOnlineRegistered(): Promise<Driver[]> {
     return Driver.findAll({
-      where: { isAvailable: true, isOnline: true, userId: { [Op.ne]: null } },
+      where: { isOnline: true, userId: { [Op.ne]: null } },
       include: [VehicleType],
     });
   }
