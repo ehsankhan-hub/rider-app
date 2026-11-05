@@ -127,13 +127,29 @@ function parseBody(value: string): unknown {
                       <p class="hint">{{ stopPrompt() }}</p>
                       <button type="button" (click)="confirmStop(trip)" [disabled]="busy()">Rider got out here</button>
                       <button class="ghost" type="button" (click)="keepGoing()" [disabled]="busy()">Keep going</button>
+                    } @else if (noShowPrompt()) {
+                      @if (atPickup(trip)) {
+                        <p class="hint">The rider is not at the pickup. End this trip with no fare?</p>
+                      } @else {
+                        <p class="err">Stay at the pickup first. You are {{ awayLabel(trip) }} from it.</p>
+                      }
+                      @if (error()) { <p class="err">{{ error() }}</p> }
+                      <button type="button" (click)="riderMissing(trip)" [disabled]="busy() || !atPickup(trip)">Rider not here</button>
+                      <button class="ghost" type="button" (click)="noShowPrompt.set(false)" [disabled]="busy()">Keep waiting</button>
                     } @else if (passPrompt()) {
                       <p class="hint">Pass this trip so another driver can take it?</p>
                       <button type="button" (click)="pass(trip)" [disabled]="busy()">Pass trip</button>
                       <button class="ghost" type="button" (click)="passPrompt.set(false)" [disabled]="busy()">Keep it</button>
                     } @else {
+                      @if (error()) { <p class="err">{{ error() }}</p> }
+                      @if (trip.status === 'assigned' && !atPickup(trip)) {
+                        <p class="hint">Go to the pickup first. You are {{ awayLabel(trip) }} away.</p>
+                      }
                       @if (nextAction(trip); as action) {
-                        <button type="button" (click)="advance(trip, action.status)" [disabled]="busy()">{{ action.label }}</button>
+                        <button type="button" (click)="advance(trip, action.status)" [disabled]="busy() || !canAdvance(trip, action.status)">{{ action.label }}</button>
+                      }
+                      @if (trip.status === 'arriving' && waitLeft(trip) === 0) {
+                        <button class="ghost" type="button" (click)="noShowPrompt.set(true)" [disabled]="busy()">Rider not here</button>
                       }
                       @if (trip.status === 'assigned' || trip.status === 'arriving') {
                         <button class="ghost" type="button" (click)="passPrompt.set(true)" [disabled]="busy()">Pass trip</button>
@@ -145,7 +161,7 @@ function parseBody(value: string): unknown {
               } @else {
                 <section class="block wait">
                   <p class="stage">Waiting for a trip</p>
-                  <p class="hint">You are online. Nearby requests will show up here.</p>
+                  <p class="hint">Keep this page open. The screen stays on so your location keeps updating. If you lock the phone, location pauses until you open this page again.</p>
                   <button class="ghost" type="button" (click)="goOffline()" [disabled]="busy()">Go offline</button>
                 </section>
               }
@@ -308,6 +324,13 @@ export class ShiftComponent implements OnDestroy {
   private routeKey = '';
   private selfMarker?: L.CircleMarker;
   private watchId = 0;
+  private pulse?: ReturnType<typeof setInterval>;
+  private wakeLock: WakeLockSentinel | null = null;
+  private readonly onVisible = (): void => {
+    if (document.visibilityState !== 'visible' || !this.online()) return;
+    void this.holdAwake();
+    this.pushLocation();
+  };
 
   summary = signal<DriverSummary | null>(null);
   tab = signal<'home' | 'earnings' | 'account'>('home');
@@ -319,6 +342,9 @@ export class ShiftComponent implements OnDestroy {
   error = signal('');
   stopPrompt = signal('');
   passPrompt = signal(false);
+  noShowPrompt = signal(false);
+  private readonly now = signal(Date.now());
+  private clock?: ReturnType<typeof setInterval>;
 
   constructor() {
     effect(() => {
@@ -328,6 +354,7 @@ export class ShiftComponent implements OnDestroy {
       if (update.status === 'completed' || update.status === 'cancelled' || update.status === 'searching' || !mine) {
         this.stopPrompt.set('');
         this.passPrompt.set(false);
+        this.noShowPrompt.set(false);
         this.ride.set(null);
         this.clearTrip();
         if (update.status === 'completed') this.loadSummary();
@@ -335,8 +362,13 @@ export class ShiftComponent implements OnDestroy {
       }
       if (update.status !== 'in_progress') this.stopPrompt.set('');
       const had = this.ride();
-      if (!had || had.id !== update.id) this.tab.set('home');
-      this.passPrompt.set(false);
+      if (!had || had.id !== update.id) {
+        this.tab.set('home');
+        this.passPrompt.set(false);
+        this.noShowPrompt.set(false);
+      }
+      if (update.status !== 'arriving') this.noShowPrompt.set(false);
+      if (update.status !== 'assigned' && update.status !== 'arriving') this.passPrompt.set(false);
       this.ride.set(update);
       this.drawTrip(update);
     });
@@ -353,6 +385,7 @@ export class ShiftComponent implements OnDestroy {
       this.zone.run(() => this.placeSelf(event.latlng.lat, event.latlng.lng));
     });
     setTimeout(() => this.map?.invalidateSize(), 50);
+    this.clock = setInterval(() => this.zone.run(() => this.now.set(Date.now())), 1000);
     this.readGps((lat, lng) => {
       if (!this.here()) this.placeSelf(lat, lng);
     });
@@ -371,26 +404,57 @@ export class ShiftComponent implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    if (this.clock) clearInterval(this.clock);
     if (this.watchId) navigator.geolocation.clearWatch(this.watchId);
+    this.stopPresence();
     this.map?.remove();
   }
 
   nextAction(trip: DriverRide) {
-    if (trip.status === 'assigned' && this.atPickup(trip)) {
-      return { status: 'in_progress' as const, label: 'Start trip' };
-    }
     return NEXT[trip.status] ?? null;
   }
 
+  canAdvance(trip: DriverRide, status: 'arriving' | 'in_progress' | 'completed'): boolean {
+    if (status === 'arriving') return this.atPickup(trip);
+    return true;
+  }
+
   stage(trip: DriverRide): string {
-    if (trip.status === 'assigned' && this.atPickup(trip)) return 'Waiting for the rider';
+    if (trip.status === 'arriving' && this.waitLeft(trip) > 0) {
+      return `Waiting for the rider · ${this.waitLabel(trip)}`;
+    }
     return STAGE[trip.status] ?? trip.status;
+  }
+
+  waitLeft(trip: DriverRide): number {
+    const ends = trip.noShowAt
+      ? new Date(trip.noShowAt).getTime()
+      : trip.arrivedAt
+        ? new Date(trip.arrivedAt).getTime() + 5 * 60 * 1000
+        : Number.NaN;
+    if (!Number.isFinite(ends)) return 5 * 60 * 1000;
+    return Math.max(0, ends - this.now());
+  }
+
+  waitLabel(trip: DriverRide): string {
+    const total = Math.ceil(this.waitLeft(trip) / 1000);
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
   atPickup(trip: DriverRide): boolean {
     const here = this.here();
     if (!here) return false;
     return this.apartKm(here.lat, here.lng, Number(trip.pickupLat), Number(trip.pickupLng)) <= 0.3;
+  }
+
+  awayLabel(trip: DriverRide): string {
+    const here = this.here();
+    if (!here) return 'an unknown distance';
+    const km = this.apartKm(here.lat, here.lng, Number(trip.pickupLat), Number(trip.pickupLng));
+    if (km < 1) return `${Math.max(1, Math.round(km * 1000))} m`;
+    return `${km.toFixed(1)} km`;
   }
 
   firstName(trip: DriverRide): string {
@@ -471,6 +535,24 @@ export class ShiftComponent implements OnDestroy {
     return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
+  riderMissing(trip: DriverRide): void {
+    const here = this.here();
+    this.busy.set(true);
+    this.error.set('');
+    this.api.noShow(trip.id, here ? { lat: here.lat, lng: here.lng } : {}).subscribe({
+      next: () => {
+        this.noShowPrompt.set(false);
+        this.ride.set(null);
+        this.clearTrip();
+        this.busy.set(false);
+      },
+      error: (err: { error?: { error?: { message?: string } } }) => {
+        this.error.set(failureReason(err, 'Could not end the trip'));
+        this.busy.set(false);
+      },
+    });
+  }
+
   pass(trip: DriverRide): void {
     this.busy.set(true);
     this.error.set('');
@@ -518,6 +600,7 @@ export class ShiftComponent implements OnDestroy {
       next: () => {
         if (this.watchId) navigator.geolocation.clearWatch(this.watchId);
         this.watchId = 0;
+        this.stopPresence();
         this.online.set(false);
         this.loadSummary();
         this.busy.set(false);
@@ -557,8 +640,9 @@ export class ShiftComponent implements OnDestroy {
       });
       return;
     }
+    const here = this.here();
     this.busy.set(true);
-    this.api.setStatus(trip.id, status).subscribe({
+    this.api.setStatus(trip.id, status, here ? { lat: here.lat, lng: here.lng } : {}).subscribe({
       next: (updated) => {
         this.ride.set(updated.status === 'completed' ? null : updated);
         this.busy.set(false);
@@ -657,7 +741,9 @@ export class ShiftComponent implements OnDestroy {
   }
 
   private watch(): void {
-    if (this.watchId || !this.secure || !navigator.geolocation) return;
+    if (!this.secure || !navigator.geolocation) return;
+    this.startPresence();
+    if (this.watchId) return;
     this.watchId = navigator.geolocation.watchPosition(
       (pos) => {
         this.zone.run(() => {
@@ -665,8 +751,46 @@ export class ShiftComponent implements OnDestroy {
         });
       },
       () => undefined,
-      { enableHighAccuracy: false, maximumAge: 5000 },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
     );
+  }
+
+  private startPresence(): void {
+    void this.holdAwake();
+    if (this.pulse) return;
+    document.addEventListener('visibilitychange', this.onVisible);
+    this.pulse = setInterval(() => this.pushLocation(), 20000);
+  }
+
+  private stopPresence(): void {
+    if (this.pulse) clearInterval(this.pulse);
+    this.pulse = undefined;
+    document.removeEventListener('visibilitychange', this.onVisible);
+    const lock = this.wakeLock;
+    this.wakeLock = null;
+    void lock?.release().catch(() => undefined);
+  }
+
+  private pushLocation(): void {
+    if (!this.online()) return;
+    void this.holdAwake();
+    this.readGps(
+      (lat, lng) => this.placeSelf(lat, lng),
+      () => {
+        const point = this.here();
+        if (point) this.api.location(point.lat, point.lng).subscribe({ error: () => undefined });
+      },
+    );
+  }
+
+  private async holdAwake(): Promise<void> {
+    if (!this.online() || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
+    if (this.wakeLock && !this.wakeLock.released) return;
+    try {
+      this.wakeLock = await navigator.wakeLock.request('screen');
+    } catch {
+      this.wakeLock = null;
+    }
   }
 
   private loadSummary(): void {

@@ -47,9 +47,13 @@ const COPY = {
     standardRate: 'priced by distance and time',
     booked: 'Ride confirmed',
     searching: 'Looking for a driver',
-    arriving: 'Driver is on the way',
+    onTheWay: 'Driver is on the way',
+    waiting: 'Driver is waiting at the pickup',
     started: 'Trip started',
     completed: 'Trip completed',
+    cancelled: 'This trip was cancelled',
+    cancelRide: 'Cancel ride',
+    noShow: 'The driver waited 5 minutes at the pickup and left. You were not charged. Book again if you still need a ride.',
     driver: 'Driver',
   },
   ar: {
@@ -90,9 +94,13 @@ const COPY = {
     standardRate: 'السعر حسب المسافة والوقت',
     booked: 'تم تأكيد الرحلة',
     searching: 'جارٍ البحث عن سائق',
-    arriving: 'السائق في الطريق',
+    onTheWay: 'السائق في الطريق',
+    waiting: 'السائق ينتظر عند نقطة الانطلاق',
     started: 'بدأت الرحلة',
     completed: 'اكتملت الرحلة',
+    cancelled: 'تم إلغاء الرحلة',
+    cancelRide: 'إلغاء الرحلة',
+    noShow: 'انتظر السائق 5 دقائق عند نقطة الانطلاق ثم غادر. لم يتم تحصيل أي مبلغ. احجز مرة أخرى إذا ما زلت تحتاج إلى الرحلة.',
     driver: 'السائق',
   },
 } as const;
@@ -126,7 +134,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
   template: `
     <div class="stage" [class.picking]="stage() === 'pickup'" [attr.dir]="lang() === 'ar' ? 'rtl' : 'ltr'">
       <div #mapHost class="map"></div>
-      @if (stage() === 'pickup') {
+      @if (stage() === 'pickup' && pickupPinLabel()) {
         <div class="pin">
           <div class="pin-label">{{ pickupPinLabel() }}</div>
           <div class="pin-stem"></div>
@@ -193,7 +201,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
               </ul>
             }
             @if (pickupPoint() && dropoffPoint()) {
-              <button class="go" type="button" (click)="confirmPickup()">{{ t('vehicle') }}</button>
+              <button class="go" type="button" (click)="openPickup()">{{ t('confirmPickup') }}</button>
             }
           }
           @case ('pickup') {
@@ -216,6 +224,13 @@ type BookStage = 'search' | 'pickup' | 'rides';
                 </svg>
               </button>
             </div>
+            <div class="addr">
+              <span class="mark to"></span>
+              <div>
+                <span>{{ t('dropoff') }}</span>
+                <strong>{{ dropoffQuery() }}</strong>
+              </div>
+            </div>
             <button class="go" type="button" (click)="confirmPickup()">{{ t('confirmPickup') }}</button>
           }
           @case ('rides') {
@@ -224,10 +239,17 @@ type BookStage = 'search' | 'pickup' | 'rides';
               @if (message()) {
                 <p class="status" [class.ok]="messageKind() === 'ok'" [class.err]="messageKind() === 'err'">{{ message() }}</p>
               }
+              @if (canCancel()) {
+                <button class="back" type="button" (click)="cancelTrip()" [disabled]="busy()">{{ t('cancelRide') }}</button>
+              }
             } @else {
               <div class="sheet-head">
                 <button class="back" type="button" (click)="backToSearch()">{{ t('back') }}</button>
                 <h2>{{ t('vehicle') }}</h2>
+              </div>
+              <div class="ends">
+                <p><span class="mark from"></span>{{ addressLine() }}</p>
+                <p><span class="mark to"></span>{{ dropoffQuery() }}</p>
               </div>
               <div class="ride-list">
                 @for (v of orderedVehicles(); track v.id) {
@@ -274,6 +296,17 @@ type BookStage = 'search' | 'pickup' | 'rides';
       .stage { position: relative; height: 100%; min-height: 0; }
       .map { position: absolute; inset: 0; z-index: 1; }
       :host ::ng-deep .car-icon { background: transparent; border: 0; }
+      :host ::ng-deep .leaflet-tooltip.pickup-tip {
+        background: #111;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        box-shadow: none;
+        font-weight: 700;
+        font-size: 13px;
+        padding: 6px 10px;
+      }
+      :host ::ng-deep .leaflet-tooltip.pickup-tip::before { border-top-color: #111; }
       .pin {
         position: absolute;
         left: 50%;
@@ -376,6 +409,8 @@ type BookStage = 'search' | 'pickup' | 'rides';
       .addr div { display: grid; gap: 2px; flex: 1; min-width: 0; }
       .addr strong { font-size: 16px; }
       .addr span { color: var(--muted); font-size: 13px; }
+      .ends { display: grid; gap: 6px; }
+      .ends p { display: flex; align-items: center; gap: 8px; margin: 0; }
       .sheet button.back, .sheet button.find {
         width: auto;
         background: transparent;
@@ -470,6 +505,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   rideLocked = signal(false);
   lang = signal<MapLang>('en');
   pickupQuery = signal('');
+  pickupStreet = signal('');
   dropoffQuery = signal('');
   suggestions = signal<PlaceHit[]>([]);
   searching = signal(false);
@@ -622,16 +658,19 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   }
 
   addressLine(): string {
-    const first = this.pickupQuery().split(',')[0]?.trim();
-    return first || this.pickupQuery() || this.t('locating');
+    return this.pickupStreet() || this.pickupQuery().split(',')[0]?.trim() || this.t('locating');
   }
 
   addressRest(): string {
-    return this.pickupQuery().split(',').slice(1).map((part) => part.trim()).filter(Boolean).join(', ');
+    const street = this.pickupStreet();
+    const parts = this.pickupQuery().split(',').map((part) => part.trim()).filter((part) => part.length > 0);
+    const rest = street ? parts.filter((part) => part !== street) : parts.slice(1);
+    return rest.join(', ');
   }
 
   pickupPinLabel(): string {
-    const street = this.addressLine();
+    const street = this.pickupStreet();
+    if (!street) return '';
     return this.lang() === 'ar' ? `الانطلاق من ${street}` : `Pickup on ${street}`;
   }
 
@@ -678,6 +717,9 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.message.set('');
     this.stage.set('rides');
     this.syncPickupMarker();
+    const quoted = this.vehicleTypeId ? this.quotes()[this.vehicleTypeId] : undefined;
+    if (quoted?.route?.length) this.drawRoute(quoted.route);
+    else this.fitBoth();
     this.refreshQuote();
   }
 
@@ -743,8 +785,14 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     const latlng = L.latLng(place.lat, place.lng);
     const showRides = field === 'dropoff' && this.pickupPoint() != null;
     this.setPoint(field, latlng, place.label, showRides);
+    if (field === 'pickup') {
+      if (place.street) this.pickupStreet.set(place.street);
+      else this.pickupStreet.set('');
+      this.tagPickup();
+      this.reverseInto('pickup', latlng);
+    }
     if (showRides) {
-      this.confirmPickup();
+      this.openPickup();
       return;
     }
     this.map?.setView(latlng, Math.max(this.map.getZoom(), 14));
@@ -827,20 +875,53 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  canCancel(): boolean {
+    const ride = this.live.ride();
+    if (!this.rideLocked() || !this.activeRideId) return false;
+    if (ride && ride.id === this.activeRideId) {
+      return !['in_progress', 'completed', 'cancelled'].includes(ride.status);
+    }
+    return true;
+  }
+
+  cancelTrip(): void {
+    if (!this.activeRideId || this.busy()) return;
+    this.busy.set(true);
+    this.api.cancel(this.activeRideId).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.rideLocked.set(false);
+        this.activeRideId = null;
+        this.driverMarker?.remove();
+        this.driverMarker = undefined;
+        this.show(this.t('cancelled'), 'err');
+      },
+      error: (err: { error?: { error?: { message?: string } } }) => {
+        this.busy.set(false);
+        this.show(err.error?.error?.message ?? 'Could not cancel', 'err');
+      },
+    });
+  }
+
   private rideSummary(ride: Ride): string {
+    if (ride.status === 'cancelled' && ride.endNote === 'no_show') return this.t('noShow');
     const driver = ride.driver?.fullName;
     const phase =
-      ride.status === 'arriving'
-        ? this.t('arriving')
-        : ride.status === 'in_progress'
-          ? this.t('started')
-          : ride.status === 'completed'
-            ? this.t('completed')
-            : ride.status === 'searching'
-              ? this.t('searching')
-              : ride.status;
-    if (driver) return `${this.t('booked')}: ${phase}. ${this.t('driver')}: ${driver}`;
-    return `${this.t('booked')}: ${phase}`;
+      ride.status === 'assigned'
+        ? this.t('onTheWay')
+        : ride.status === 'arriving'
+          ? this.t('waiting')
+          : ride.status === 'in_progress'
+            ? this.t('started')
+            : ride.status === 'completed'
+              ? this.t('completed')
+              : ride.status === 'cancelled'
+                ? this.t('cancelled')
+                : ride.status === 'searching'
+                  ? this.t('searching')
+                  : ride.status;
+    if (driver && ride.status !== 'cancelled') return `${this.t('booked')}: ${phase}. ${this.t('driver')}: ${driver}`;
+    return ride.status === 'cancelled' ? phase : `${this.t('booked')}: ${phase}`;
   }
 
   private moveDriver(lat: number, lng: number): void {
@@ -924,7 +1005,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     const showRides = field === 'dropoff' && this.pickupPoint() != null;
     this.setPoint(field, latlng, label, showRides);
     this.reverseInto(field, latlng);
-    if (showRides) this.confirmPickup();
+    if (showRides) this.openPickup();
   }
 
   private setPoint(field: PointField, latlng: L.LatLng, label: string, keepView = false): void {
@@ -940,6 +1021,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         fillOpacity: 0.95,
         pane: 'points',
       }).addTo(this.map);
+      this.tagPickup();
       this.queueNearby();
     } else {
       this.dropoffPoint.set(latlng);
@@ -964,6 +1046,14 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
       next: (place) => {
         const current = field === 'pickup' ? this.pickupRev : this.dropoffRev;
         if (token !== current) return;
+        if (field === 'pickup') {
+          const street = place?.street?.trim() ?? '';
+          const label = place?.label?.trim() || this.coordLabel(latlng);
+          this.pickupStreet.set(street);
+          this.writeQuery('pickup', street && !label.toLowerCase().includes(street.toLowerCase()) ? `${street}, ${label}` : label);
+          this.tagPickup();
+          return;
+        }
         this.writeQuery(field, place?.label?.trim() || this.coordLabel(latlng));
       },
       error: () => {
@@ -976,6 +1066,19 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         this.writeQuery(field, this.coordLabel(latlng));
       },
     });
+  }
+
+  private tagPickup(): void {
+    const marker = this.pickupMarker;
+    if (!marker || this.stage() === 'pickup') return;
+    const text = this.pickupPinLabel();
+    if (!text) {
+      marker.unbindTooltip();
+      return;
+    }
+    const tip = marker.getTooltip();
+    if (tip) tip.setContent(text);
+    else marker.bindTooltip(text, { permanent: true, direction: 'top', offset: [0, -10], className: 'pickup-tip' });
   }
 
   private writeQuery(field: PointField, value: string): void {
@@ -1173,6 +1276,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
       fillOpacity: 0.95,
       pane: 'points',
     }).addTo(this.map);
+    this.tagPickup();
   }
 
   private fitBoth(): void {

@@ -52,6 +52,7 @@ export function createRideRouter(
   router.post('/driver/location', driverController.location);
   router.get('/driver/active', driverController.active);
   router.post('/rides/:id/pass', driverController.pass);
+  router.post('/rides/:id/no-show', driverController.noShow);
   router.post('/rides/:id/status', driverController.status);
   router.get('/wallet', walletController.get);
   router.post('/wallet/top-up', walletController.topUp);

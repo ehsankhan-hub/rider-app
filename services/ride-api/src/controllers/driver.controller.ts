@@ -120,6 +120,22 @@ export class DriverController {
     }
   };
 
+  noShow = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = this.requireDriver(req);
+      const body = z
+        .object({
+          lat: z.number().min(-90).max(90).optional(),
+          lng: z.number().min(-180).max(180).optional(),
+        })
+        .parse(req.body ?? {});
+      const data = await this.rideService.noShow(userId, String(req.params['id']), body);
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   active = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = this.requireDriver(req);

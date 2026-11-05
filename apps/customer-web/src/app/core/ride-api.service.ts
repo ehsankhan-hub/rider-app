@@ -30,6 +30,7 @@ export interface PlaceHit {
   lat: number;
   lng: number;
   distanceKm?: number;
+  street?: string;
 }
 
 export interface NearbyCar {
@@ -57,6 +58,7 @@ export interface Ride {
   dropoffAddress: string;
   fareAmount: string;
   distanceKm: string;
+  endNote?: string | null;
   driver?: { fullName: string } | null;
 }
 

@@ -25,6 +25,8 @@ export interface DriverRide {
   distanceKm?: string;
   durationMin?: string;
   riderName?: string;
+  arrivedAt?: string | null;
+  noShowAt?: string | null;
   driver?: { userId?: string | null };
 }
 
@@ -114,6 +116,10 @@ export class DriverApiService {
 
   pass(id: string) {
     return this.http.post(`${env.rideApi}/api/v1/rides/${id}/pass`, {});
+  }
+
+  noShow(id: string, body?: { lat?: number; lng?: number }) {
+    return this.http.post(`${env.rideApi}/api/v1/rides/${id}/no-show`, body ?? {});
   }
 
   setStatus(

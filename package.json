@@ -15,10 +15,7 @@
   "engines": {
     "node": ">=20"
   },
-  "overrides": {
-    "typescript": "5.8.3"
-  },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "5.8.3"
   }
 }

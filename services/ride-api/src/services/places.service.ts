@@ -10,6 +10,7 @@ export interface PlaceHit {
   region?: string;
   country?: string;
   countryCode?: string;
+  street?: string;
 }
 
 interface RankedHit extends PlaceHit {
@@ -68,7 +69,9 @@ export class PlacesService {
   }
 
   async reverse(lat: number, lng: number, lang: 'en' | 'ar'): Promise<PlaceHit | null> {
-    return (await this.reverseNominatim(lat, lng, lang)) ?? (await this.reverseEsri(lat, lng, lang));
+    const local = await this.reverseNominatim(lat, lng, lang);
+    if (local?.street) return local;
+    return (await this.reverseEsri(lat, lng, lang)) ?? local;
   }
 
   private async searchNominatim(input: PlaceSearchInput): Promise<RankedHit[] | null> {
@@ -126,8 +129,14 @@ export class PlacesService {
     const y = body?.location?.y ?? lat;
     const x = body?.location?.x ?? lng;
     if (!address || body?.error) return null;
-    const label = address['LongLabel'] || address['Address'] || `${y.toFixed(5)}, ${x.toFixed(5)}`;
-    return { id: `esri-${y.toFixed(5)}-${x.toFixed(5)}`, label, lat: y, lng: x };
+    const full = address['Address'] || address['ShortLabel'] || '';
+    const house = address['AddNum'] || '';
+    const street = house && full.startsWith(house) ? full.slice(house.length).trim() : full || undefined;
+    const city = [address['City'], address['Postal']].filter((part) => Boolean(part)).join(' ');
+    const label = [street || full, city || address['Region']].filter((part) => Boolean(part)).join(', ')
+      || address['LongLabel']
+      || `${y.toFixed(5)}, ${x.toFixed(5)}`;
+    return { id: `esri-${y.toFixed(5)}-${x.toFixed(5)}`, label, lat: y, lng: x, street: street || undefined };
   }
 
   private fromNominatim(place: NominatimPlace, index: number): RankedHit | null {
@@ -136,6 +145,7 @@ export class PlacesService {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
     const address = place.address ?? {};
     const name = place.name || address['road'] || address['city'] || address['town'] || place.display_name?.split(',')[0] || '';
+    const street = address['road'] || address['pedestrian'] || address['residential'] || undefined;
     const area = address['suburb'] || address['neighbourhood'] || address['city_district'];
     const city = address['city'] || address['town'] || address['village'];
     const parts = [name, area, city, address['state']].filter((part): part is string => Boolean(part));
@@ -149,6 +159,7 @@ export class PlacesService {
       region: address['state'] || undefined,
       country: address['country'] || undefined,
       countryCode: address['country_code']?.toUpperCase() || undefined,
+      street,
       name: name || label,
       kind: `${place.category ?? ''}=${place.type ?? ''}`,
     };
@@ -159,7 +170,8 @@ export class PlacesService {
     const lng = candidate.location?.x;
     if (lat === undefined || lng === undefined) return null;
     const attrs = candidate.attributes ?? {};
-    const name = attrs['PlaceName'] || attrs['StAddr'] || candidate.address?.split(',')[0] || '';
+    const name = attrs['StAddr'] || attrs['PlaceName'] || candidate.address?.split(',')[0] || '';
+    const street = attrs['StAddr'] || undefined;
     const parts = [name, attrs['City'], attrs['Region']].filter((part): part is string => Boolean(part));
     const label = [...new Set(parts)].slice(0, 3).join(', ') || candidate.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     return {
@@ -169,6 +181,7 @@ export class PlacesService {
       lng,
       region: attrs['Region'] || undefined,
       country: attrs['Country'] || undefined,
+      street,
       name: name || label,
       kind: this.esriKind(attrs['Addr_type'] ?? ''),
     };

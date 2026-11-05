@@ -14,6 +14,9 @@ import { WalletService } from './wallet.service';
 import { AppError } from '../utils/app-error';
 import { RideEvents } from '../sockets/ride-events';
 
+const NO_SHOW_WAIT_MS = 5 * 60 * 1000;
+const PICKUP_REACH_KM = 0.3;
+
 export interface CreateRideInput {
   vehicleTypeId: string;
   paymentMethod: 'CASH' | 'WALLET';
@@ -232,6 +235,37 @@ export class RideService {
     return this.publish(fresh, driver.userId, next?.userId ?? null);
   }
 
+  async noShow(driverUserId: string, rideId: string, here?: { lat?: number; lng?: number }) {
+    const driver = await this.driverDao.findByUserId(driverUserId);
+    if (!driver) throw new AppError(404, 'Driver profile not found', 'DRIVER_NOT_FOUND');
+    const ride = await this.rideDao.findById(rideId);
+    if (!ride || ride.driverId !== driver.id) throw new AppError(404, 'Ride not found', 'RIDE_NOT_FOUND');
+    if (ride.status !== 'arriving') {
+      throw new AppError(409, 'Tap I have arrived, then wait at the pickup', 'NOT_WAITING');
+    }
+    const arrived = this.arrivedAt(ride.events);
+    if (!arrived) throw new AppError(409, 'Tap I have arrived, then wait at the pickup', 'NOT_WAITING');
+    const leftMs = NO_SHOW_WAIT_MS - (Date.now() - arrived.getTime());
+    if (leftMs > 0) {
+      const minutes = Math.max(1, Math.ceil(leftMs / 60_000));
+      throw new AppError(409, `Wait ${minutes} more minute${minutes === 1 ? '' : 's'} at the pickup`, 'WAIT_NOT_FINISHED');
+    }
+    const point = this.endPoint(here, driver);
+    if (!point) throw new AppError(409, 'Stay at the pickup to mark the rider as not here', 'NOT_AT_PICKUP');
+    const km = haversineKm(point.lat, point.lng, Number(ride.pickupLat), Number(ride.pickupLng));
+    if (km > PICKUP_REACH_KM) {
+      throw new AppError(409, 'Stay at the pickup to mark the rider as not here', 'NOT_AT_PICKUP');
+    }
+    if (ride.paymentMethod === 'WALLET' && Number(ride.fareAmount) > 0) {
+      await this.walletService.refundRide(ride.customerUserId, Number(ride.fareAmount), ride.id);
+    }
+    await this.rideDao.markNoShow(ride.id);
+    await this.rideDao.addEvent(ride.id, 'cancelled', 'Rider was not at the pickup. The driver waited and left.');
+    await this.driverDao.setAvailable(driver.id, true);
+    const fresh = await this.rideDao.findById(ride.id);
+    return this.publish(fresh, driver.userId);
+  }
+
   async advance(
     driverUserId: string,
     rideId: string,
@@ -253,6 +287,13 @@ export class RideService {
     };
     if (allowed[ride.status] !== nextStatus) {
       throw new AppError(409, 'Ride cannot move to that status', 'INVALID_STATUS');
+    }
+    if (nextStatus === 'arriving') {
+      const here = this.endPoint(options, driver);
+      const km = here ? haversineKm(here.lat, here.lng, Number(ride.pickupLat), Number(ride.pickupLng)) : Number.POSITIVE_INFINITY;
+      if (km > PICKUP_REACH_KM) {
+        throw new AppError(409, 'Reach the pickup before you mark that you have arrived', 'NOT_AT_PICKUP');
+      }
     }
     if (nextStatus === 'completed') {
       const here = this.endPoint(options, driver);
@@ -335,7 +376,19 @@ export class RideService {
 
   async present(ride: Ride) {
     const profile = await this.customers.findByUserId(ride.customerUserId);
-    return { ...ride.toJSON(), riderName: profile?.fullName ?? 'Rider' };
+    const arrived = ride.status === 'arriving' ? this.arrivedAt(ride.events) : null;
+    return {
+      ...ride.toJSON(),
+      riderName: profile?.fullName ?? 'Rider',
+      arrivedAt: arrived ? arrived.toISOString() : null,
+      noShowAt: arrived ? new Date(arrived.getTime() + NO_SHOW_WAIT_MS).toISOString() : null,
+    };
+  }
+
+  private arrivedAt(events: Ride['events']): Date | null {
+    const marks = (events ?? []).filter((event) => event.status === 'arriving' && event.createdAt);
+    if (marks.length === 0) return null;
+    return marks.reduce((earliest, event) => (event.createdAt < earliest.createdAt ? event : earliest)).createdAt;
   }
 
   private async publish(ride: Ride | null, ...driverUserIds: Array<string | null | undefined>) {

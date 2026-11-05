@@ -144,7 +144,7 @@ export class MonitorComponent implements AfterViewInit, OnDestroy {
     const trip = driver.trip;
     if (!trip) return driver.isAvailable ? 'Free, waiting for a ride' : 'Online';
     if (trip.status === 'assigned') return 'Accepted a ride';
-    if (trip.status === 'arriving') return 'Heading to the pickup';
+    if (trip.status === 'arriving') return 'Waiting at the pickup';
     if (trip.status === 'in_progress') return 'On the trip';
     return 'On a ride';
   }

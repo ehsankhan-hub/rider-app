@@ -86,7 +86,7 @@ export class RideDao {
         driverId,
         status: { [Op.notIn]: ['completed', 'cancelled'] },
       },
-      include: [Driver, VehicleType],
+      include: [Driver, VehicleType, RideStatusEvent],
       order: [['createdAt', 'DESC']],
     });
   }
@@ -111,6 +111,13 @@ export class RideDao {
 
   async setReview(id: string, reviewStatus: 'accepted' | 'rejected'): Promise<void> {
     await Ride.update({ reviewStatus, reviewedAt: new Date() }, { where: { id } });
+  }
+
+  async markNoShow(id: string): Promise<void> {
+    await Ride.update(
+      { status: 'cancelled', endNote: 'no_show', fareAmount: '0.00' },
+      { where: { id } },
+    );
   }
 
   async updateStatus(id: string, status: string, driverId?: string | null): Promise<void> {
