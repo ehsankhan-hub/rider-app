@@ -58,6 +58,31 @@ export class RideDao {
     });
   }
 
+  findOffered(): Promise<Ride[]> {
+    return Ride.findAll({
+      where: { status: 'offered' },
+      include: [Driver, RideStatusEvent],
+    });
+  }
+
+  findStaleSearches(olderThan: Date): Promise<Ride[]> {
+    return Ride.findAll({
+      where: {
+        status: { [Op.in]: ['searching', 'offered'] },
+        createdAt: { [Op.lte]: olderThan },
+      },
+      include: [Driver],
+    });
+  }
+
+  async closeUnmatched(id: string): Promise<boolean> {
+    const [count] = await Ride.update(
+      { status: 'cancelled', endNote: 'no_driver', driverId: null },
+      { where: { id, status: { [Op.in]: ['searching', 'offered'] } } },
+    );
+    return count > 0;
+  }
+
   findSearching(vehicleTypeId: string): Promise<Ride[]> {
     return Ride.findAll({
       where: { vehicleTypeId, status: 'searching', driverId: { [Op.is]: null } },

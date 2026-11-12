@@ -30,6 +30,7 @@ import { SettingsDao } from './dao/settings.dao';
 import { createRideRouter } from './routes/ride.routes';
 import { errorMiddleware } from './middlewares/error.middleware';
 import { RideEvents } from './sockets/ride-events';
+import { logger } from './config/logger';
 
 export function createApp(rideEvents: RideEvents) {
   const app = express();
@@ -62,6 +63,11 @@ export function createApp(rideEvents: RideEvents) {
     customers,
     countryStamp,
   );
+
+  const offerSweep = setInterval(() => {
+    void rideService.sweepOffers().catch((err: unknown) => logger.error({ err }, 'Could not expire ride offers'));
+  }, 2000);
+  offerSweep.unref();
 
   const rideController = new RideController(rideService);
   const walletController = new WalletController(walletService);

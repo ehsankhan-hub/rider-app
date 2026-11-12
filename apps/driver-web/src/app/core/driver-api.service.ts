@@ -27,6 +27,7 @@ export interface DriverRide {
   riderName?: string;
   arrivedAt?: string | null;
   noShowAt?: string | null;
+  offerExpiresAt?: string | null;
   driver?: { userId?: string | null };
 }
 
@@ -112,6 +113,10 @@ export class DriverApiService {
 
   summary() {
     return this.http.get<{ data: DriverSummary }>(`${env.rideApi}/api/v1/driver/summary`).pipe(map((r) => r.data));
+  }
+
+  accept(id: string) {
+    return this.http.post<{ data: DriverRide }>(`${env.rideApi}/api/v1/rides/${id}/accept`, {}).pipe(map((r) => r.data));
   }
 
   pass(id: string) {

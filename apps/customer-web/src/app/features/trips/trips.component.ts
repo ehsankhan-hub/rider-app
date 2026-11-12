@@ -4,6 +4,7 @@ import { Ride, RideApiService } from '../../core/ride-api.service';
 const STATUS: Record<string, string> = {
   requested: 'Requested',
   searching: 'Looking for a driver',
+  offered: 'Looking for a driver',
   assigned: 'Driver on the way',
   arriving: 'Driver arrived',
   in_progress: 'On trip',
@@ -56,6 +57,7 @@ export class TripsComponent {
   }
 
   label(ride: Ride): string {
+    if (ride.status === 'cancelled' && ride.endNote === 'no_driver') return 'No driver found';
     if (ride.status === 'cancelled' && ride.endNote === 'no_show') return 'Driver left — no charge';
     return STATUS[ride.status] ?? ride.status;
   }

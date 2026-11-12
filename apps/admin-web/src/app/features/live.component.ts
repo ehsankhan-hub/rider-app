@@ -124,6 +124,8 @@ type BoardRide = OperationsBoard['rides'][number];
                       <span class="pill" data-tone="bad">Needs review</span>
                     } @else if (ride.endNote === 'no_show') {
                       <span class="pill" data-tone="bad">Rider not there</span>
+                    } @else if (ride.endNote === 'no_driver') {
+                      <span class="pill" data-tone="off">No driver</span>
                     }
                   </td>
                   <td>{{ ride.vehicleName }}</td>

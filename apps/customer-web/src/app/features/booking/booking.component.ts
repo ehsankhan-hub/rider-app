@@ -49,11 +49,17 @@ const COPY = {
     searching: 'Looking for a driver',
     bookAnother: 'Done',
     onTheWay: 'Driver is on the way',
+    toPickup: 'Heading to your pickup',
+    arrived: 'Arrived at your pickup',
+    toDropoff: 'Heading to your drop-off',
+    here: 'Here',
     waiting: 'Driver is waiting at the pickup',
     started: 'Trip started',
     completed: 'Trip completed',
     cancelled: 'This trip was cancelled',
     cancelRide: 'Cancel ride',
+    noDriverTitle: 'No driver found',
+    noDriver: 'No driver accepted within 5 minutes. You were not charged. Try again in a few minutes.',
     noShow: 'The driver waited 5 minutes at the pickup and left. You were not charged. Book again if you still need a ride.',
     driver: 'Driver',
   },
@@ -97,11 +103,17 @@ const COPY = {
     searching: 'جارٍ البحث عن سائق',
     bookAnother: 'تم',
     onTheWay: 'السائق في الطريق',
+    toPickup: 'في الطريق إلى نقطة الانطلاق',
+    arrived: 'وصل إلى نقطة الانطلاق',
+    toDropoff: 'في الطريق إلى الوجهة',
+    here: 'وصل',
     waiting: 'السائق ينتظر عند نقطة الانطلاق',
     started: 'بدأت الرحلة',
     completed: 'اكتملت الرحلة',
     cancelled: 'تم إلغاء الرحلة',
     cancelRide: 'إلغاء الرحلة',
+    noDriverTitle: 'لم يتم العثور على سائق',
+    noDriver: 'لم يقبل أي سائق خلال 5 دقائق. لم يتم تحصيل أي مبلغ. حاول مرة أخرى بعد قليل.',
     noShow: 'انتظر السائق 5 دقائق عند نقطة الانطلاق ثم غادر. لم يتم تحصيل أي مبلغ. احجز مرة أخرى إذا ما زلت تحتاج إلى الرحلة.',
     driver: 'السائق',
   },
@@ -245,7 +257,9 @@ type BookStage = 'search' | 'pickup' | 'rides';
           @case ('rides') {
             @if (finishedRide(); as done) {
               <h2>{{ phaseTitle(done) }}</h2>
-              @if (done.status === 'cancelled' && done.endNote === 'no_show') {
+              @if (done.status === 'cancelled' && done.endNote === 'no_driver') {
+                <p class="hint">{{ t('noDriver') }}</p>
+              } @else if (done.status === 'cancelled' && done.endNote === 'no_show') {
                 <p class="hint">{{ t('noShow') }}</p>
               } @else if (done.driver?.fullName && done.status !== 'cancelled') {
                 <p class="hint">{{ t('driver') }} · {{ done.driver?.fullName }}</p>
@@ -259,7 +273,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
             } @else if (rideLocked()) {
               @if (activeRide(); as trip) {
                 <h2>{{ phaseTitle(trip) }}</h2>
-                @if (trip.status === 'searching' || trip.status === 'requested') {
+                @if (trip.status === 'searching' || trip.status === 'requested' || trip.status === 'offered') {
                   <div class="pulse"></div>
                   <p class="hint">{{ t('searching') }}</p>
                 } @else {
@@ -267,7 +281,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
                     <div class="avatar">{{ initial(trip.driver?.fullName) }}</div>
                     <div>
                       <strong>{{ trip.driver?.fullName || t('driver') }}</strong>
-                      <span>{{ vehicleName(trip) }}</span>
+                      <span>{{ driverProgress(trip) }}</span>
                     </div>
                     @if (etaLabel(trip)) {
                       <b>{{ etaLabel(trip) }}</b>
@@ -575,6 +589,8 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   private carMarkers = new Map<string, L.Marker>();
   private carHeads = new Map<string, { lat: number; lng: number; heading: number }>();
   private driverMarker?: L.Marker;
+  private driverHead: { lat: number; lng: number; heading: number } | null = null;
+  private framedDriverStatus = '';
   private activeRideId: string | null = null;
   private searchTimer?: ReturnType<typeof setTimeout>;
   private carsTimer?: ReturnType<typeof setTimeout>;
@@ -628,16 +644,20 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
       if (finished) {
         this.finishedRide.set(ride);
         this.rideLocked.set(false);
+        this.clearDriver();
         return;
       }
       this.finishedRide.set(null);
       this.rideLocked.set(true);
       this.stage.set('rides');
+      this.syncDriver(ride);
     });
     effect(() => {
       const point = this.live.driverPoint();
-      if (!point || point.rideId !== this.activeRideId) return;
-      this.moveDriver(point.lat, point.lng);
+      const ride = this.activeRide();
+      if (!point || !ride || point.rideId !== ride.id || !this.tracking(ride.status)) return;
+      this.moveDriver(point.lat, point.lng, ride);
+      this.frameDriver(point.lat, point.lng, ride);
     });
   }
 
@@ -695,6 +715,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         this.activeRide.set(open);
         this.rideLocked.set(true);
         this.stage.set('rides');
+        this.syncDriver(open);
       },
     });
 
@@ -985,7 +1006,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     if (!this.rideLocked() || !this.activeRideId) return false;
     const live = this.live.ride();
     const ride = live?.id === this.activeRideId ? live : this.activeRide();
-    return ride?.status === 'requested' || ride?.status === 'searching';
+    return ride?.status === 'requested' || ride?.status === 'searching' || ride?.status === 'offered';
   }
 
   cancelTrip(): void {
@@ -998,9 +1019,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         if (current) this.finishedRide.set({ ...current, status: 'cancelled' });
         this.rideLocked.set(false);
         this.activeRideId = null;
-        this.driverHere.set(null);
-        this.driverMarker?.remove();
-        this.driverMarker = undefined;
+        this.clearDriver();
         this.message.set('');
       },
       error: (err: { error?: { error?: { message?: string } } }) => {
@@ -1015,6 +1034,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     if (ride.status === 'arriving') return this.t('waiting');
     if (ride.status === 'in_progress') return this.t('started');
     if (ride.status === 'completed') return this.t('completed');
+    if (ride.status === 'cancelled' && ride.endNote === 'no_driver') return this.t('noDriverTitle');
     if (ride.status === 'cancelled') return this.t('cancelled');
     return this.t('searching');
   }
@@ -1035,20 +1055,19 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     return symbol ? `${symbol} ${shown}` : shown;
   }
 
+  driverProgress(ride: Ride): string {
+    if (ride.status === 'arriving') return this.t('arrived');
+    const km = this.gapKm(ride);
+    if (ride.status === 'assigned') return km == null ? this.t('toPickup') : `${this.t('toPickup')} · ${this.awayText(km)}`;
+    if (ride.status === 'in_progress') return km == null ? this.t('toDropoff') : `${this.t('toDropoff')} · ${this.awayText(km)}`;
+    return this.vehicleName(ride);
+  }
+
   etaLabel(ride: Ride): string {
-    if (ride.status === 'in_progress') {
-      const mins = Number(ride.durationMin);
-      if (Number.isFinite(mins) && mins > 0) return `${Math.max(1, Math.round(mins))} ${this.t('min')}`;
-      return '';
-    }
-    if (ride.status !== 'assigned') return '';
-    const here = this.driverHere();
-    const lat = here?.lat ?? Number(ride.driver?.lat);
-    const lng = here?.lng ?? Number(ride.driver?.lng);
-    const pickupLat = Number(ride.pickupLat);
-    const pickupLng = Number(ride.pickupLng);
-    if (![lat, lng, pickupLat, pickupLng].every((value) => Number.isFinite(value))) return '';
-    const km = distanceKm(lat, lng, pickupLat, pickupLng);
+    if (ride.status === 'arriving') return this.t('here');
+    if (ride.status !== 'assigned' && ride.status !== 'in_progress') return '';
+    const km = this.gapKm(ride);
+    if (km == null) return '';
     return `${Math.max(1, Math.round((km / 28) * 60))} ${this.t('min')}`;
   }
 
@@ -1057,9 +1076,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.activeRide.set(null);
     this.activeRideId = null;
     this.rideLocked.set(false);
-    this.driverHere.set(null);
-    this.driverMarker?.remove();
-    this.driverMarker = undefined;
+    this.clearDriver();
     this.message.set('');
     this.stage.set('search');
     this.queueNearby();
@@ -1093,23 +1110,100 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     );
   }
 
-  private moveDriver(lat: number, lng: number): void {
+  private tracking(status: string): boolean {
+    return status === 'assigned' || status === 'arriving' || status === 'in_progress';
+  }
+
+  private syncDriver(ride: Ride): void {
+    if (!this.tracking(ride.status)) {
+      this.clearDriver();
+      return;
+    }
+    const lat = Number(ride.driver?.lat);
+    const lng = Number(ride.driver?.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    this.moveDriver(lat, lng, ride);
+    this.frameDriver(lat, lng, ride);
+  }
+
+  private clearDriver(): void {
+    this.driverHere.set(null);
+    this.driverHead = null;
+    this.framedDriverStatus = '';
+    this.driverMarker?.remove();
+    this.driverMarker = undefined;
+  }
+
+  private moveDriver(lat: number, lng: number, ride: Ride): void {
     if (!this.map) return;
     const at: L.LatLngExpression = [lat, lng];
     this.driverHere.set({ lat, lng });
+    let heading = this.driverHead?.heading ?? 0;
+    if (this.driverHead) {
+      const dLat = lat - this.driverHead.lat;
+      const dLng = lng - this.driverHead.lng;
+      if (Math.hypot(dLat, dLng) > 0.00004) heading = (Math.atan2(dLng, dLat) * 180) / Math.PI;
+    }
+    this.driverHead = { lat, lng, heading };
+    const icon = this.carIcon(heading, this.rideCarCode(ride));
     if (!this.driverMarker) {
-      this.driverMarker = L.marker(at, {
-        icon: L.divIcon({
-          className: 'car-icon',
-          iconSize: [18, 18],
-          iconAnchor: [9, 9],
-          html: '<span style="display:block;width:18px;height:18px;border-radius:50%;background:#f0c14b;border:2px solid #0f1419"></span>',
-        }),
-        interactive: false,
-      }).addTo(this.map);
+      this.driverMarker = L.marker(at, { icon, interactive: false, zIndexOffset: 800 }).addTo(this.map);
       return;
     }
     this.driverMarker.setLatLng(at);
+    this.driverMarker.setIcon(icon);
+  }
+
+  private frameDriver(lat: number, lng: number, ride: Ride): void {
+    if (!this.map) return;
+    const at = L.latLng(lat, lng);
+    const statusChanged = this.framedDriverStatus !== ride.status;
+    const outside = this.framedDriverStatus !== '' && !this.map.getBounds().pad(-0.2).contains(at);
+    if (!statusChanged && (this.keepView || !outside)) return;
+    const target = this.targetFor(ride);
+    const bounds = L.latLngBounds([at]);
+    if (target) bounds.extend(target);
+    const bottom = Math.round(this.map.getSize().y * 0.42);
+    this.map.fitBounds(bounds, {
+      paddingTopLeft: L.point(48, 56),
+      paddingBottomRight: L.point(48, bottom),
+      maxZoom: 15,
+    });
+    this.framedDriverStatus = ride.status;
+  }
+
+  private targetFor(ride: Ride): L.LatLng | null {
+    if (ride.status === 'in_progress') {
+      return this.dropoffPoint() ?? this.coord(ride.dropoffLat, ride.dropoffLng);
+    }
+    return this.pickupPoint() ?? this.coord(ride.pickupLat, ride.pickupLng);
+  }
+
+  private coord(lat: string | undefined, lng: string | undefined): L.LatLng | null {
+    const y = Number(lat);
+    const x = Number(lng);
+    if (!Number.isFinite(y) || !Number.isFinite(x)) return null;
+    return L.latLng(y, x);
+  }
+
+  private gapKm(ride: Ride): number | null {
+    const here = this.driverHere();
+    const lat = here?.lat ?? Number(ride.driver?.lat);
+    const lng = here?.lng ?? Number(ride.driver?.lng);
+    const target = this.targetFor(ride);
+    if (!target || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return distanceKm(lat, lng, target.lat, target.lng);
+  }
+
+  private awayText(km: number): string {
+    if (km < 1) return `${Math.max(1, Math.round(km * 1000))} m`;
+    return `${km.toFixed(1)} km`;
+  }
+
+  private rideCarCode(ride: Ride): NearbyCar['vehicleCode'] {
+    const code = ride.vehicleType?.code;
+    if (code === 'comfort' || code === 'xl') return code;
+    return 'economy';
   }
 
   private show(text: string, kind: 'ok' | 'err' | 'info'): void {
@@ -1286,7 +1380,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     const map = this.map;
     if (!map) return;
     const status = this.activeRide()?.status;
-    const driverChosen = this.finishedRide() != null || (this.rideLocked() && status !== 'searching' && status !== 'requested');
+    const driverChosen = this.finishedRide() != null || (this.rideLocked() && status !== 'searching' && status !== 'requested' && status !== 'offered');
     if (driverChosen) {
       this.nearbyCars.set([]);
       this.drawCars([]);

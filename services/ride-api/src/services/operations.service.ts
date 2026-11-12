@@ -8,7 +8,7 @@ import { Ride } from '../models/ride.model';
 import { RideStatusEvent } from '../models/ride-status-event.model';
 import { haversineKm } from './geo';
 
-const OPEN = new Set(['requested', 'searching', 'assigned', 'arriving', 'in_progress']);
+const OPEN = new Set(['requested', 'searching', 'offered', 'assigned', 'arriving', 'in_progress']);
 
 export class OperationsService {
   constructor(

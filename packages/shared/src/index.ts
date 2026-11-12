@@ -4,6 +4,7 @@ export type Role = (typeof ROLES)[number];
 export const RIDE_STATUSES = [
   'requested',
   'searching',
+  'offered',
   'assigned',
   'arriving',
   'in_progress',

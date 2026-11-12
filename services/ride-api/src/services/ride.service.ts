@@ -13,8 +13,11 @@ import { Ride } from '../models/ride.model';
 import { WalletService } from './wallet.service';
 import { AppError } from '../utils/app-error';
 import { RideEvents } from '../sockets/ride-events';
+import { logger } from '../config/logger';
 
 const NO_SHOW_WAIT_MS = 5 * 60 * 1000;
+const SEARCH_MS = 5 * 60 * 1000;
+const OFFER_MS = 15 * 1000;
 const PICKUP_REACH_KM = 0.3;
 
 export interface CreateRideInput {
@@ -30,6 +33,8 @@ export interface CreateRideInput {
 }
 
 export class RideService {
+  private sweeping = false;
+
   constructor(
     private readonly rideDao: RideDao,
     private readonly vehicleTypeDao: VehicleTypeDao,
@@ -108,11 +113,7 @@ export class RideService {
       runtime.assignRadiusKm,
     );
 
-    if (driver) {
-      await this.driverDao.setAvailable(driver.id, false);
-      await this.rideDao.updateStatus(ride.id, 'assigned', driver.id);
-      await this.rideDao.addEvent(ride.id, 'assigned', `Assigned to ${driver.fullName}`);
-    }
+    if (driver) await this.offerTo(ride.id, driver);
 
     const fresh = await this.rideDao.findById(ride.id);
     await this.publish(fresh, driver?.userId ?? null);
@@ -133,9 +134,7 @@ export class RideService {
     }
     const runtime = await this.catalogService.runtime();
     if (!chosen || bestKm > runtime.assignRadiusKm) return null;
-    await this.driverDao.setAvailable(driver.id, false);
-    await this.rideDao.updateStatus(chosen.id, 'assigned', driver.id);
-    await this.rideDao.addEvent(chosen.id, 'assigned', `Assigned to ${driver.fullName}`);
+    await this.offerTo(chosen.id, driver);
     const fresh = await this.rideDao.findById(chosen.id);
     return this.publish(fresh, driver.userId);
   }
@@ -217,27 +216,66 @@ export class RideService {
     if (!driver) throw new AppError(404, 'Driver profile not found', 'DRIVER_NOT_FOUND');
     const ride = await this.rideDao.findById(rideId);
     if (!ride || ride.driverId !== driver.id) throw new AppError(404, 'Ride not found', 'RIDE_NOT_FOUND');
-    if (!['assigned', 'arriving'].includes(ride.status)) {
+    if (!['offered', 'assigned', 'arriving'].includes(ride.status)) {
       throw new AppError(409, 'You can pass a trip only before it starts', 'CANNOT_PASS');
     }
-    await this.driverDao.setAvailable(driver.id, true);
-    await this.rideDao.updateStatus(ride.id, 'searching', null);
-    await this.rideDao.addEvent(ride.id, 'searching', `${driver.fullName} passed this trip`);
-    const runtime = await this.catalogService.runtime();
-    const next = await this.dispatchService.assignNearest(
-      ride.vehicleTypeId,
-      Number(ride.pickupLat),
-      Number(ride.pickupLng),
-      runtime.assignRadiusKm,
-      driver.id,
-    );
-    if (next) {
-      await this.driverDao.setAvailable(next.id, false);
-      await this.rideDao.updateStatus(ride.id, 'assigned', next.id);
-      await this.rideDao.addEvent(ride.id, 'assigned', `Assigned to ${next.fullName}`);
+    const note = ride.status === 'offered'
+      ? `${driver.fullName} declined this trip`
+      : `${driver.fullName} passed this trip`;
+    return this.handOff(driver, ride, note);
+  }
+
+  async accept(driverUserId: string, rideId: string) {
+    const driver = await this.driverDao.findByUserId(driverUserId);
+    if (!driver) throw new AppError(404, 'Driver profile not found', 'DRIVER_NOT_FOUND');
+    const ride = await this.rideDao.findById(rideId);
+    if (!ride || ride.driverId !== driver.id) throw new AppError(404, 'Ride not found', 'RIDE_NOT_FOUND');
+    if (ride.status !== 'offered') {
+      throw new AppError(409, 'This request is no longer waiting for you', 'OFFER_CLOSED');
     }
+    const expires = this.offerExpiresAt(ride.events);
+    if (!expires || Date.now() > expires.getTime()) {
+      await this.handOff(driver, ride, `${driver.fullName} did not accept in time`);
+      throw new AppError(409, 'That request expired', 'OFFER_EXPIRED');
+    }
+    await this.rideDao.updateStatus(ride.id, 'assigned', driver.id);
+    await this.rideDao.addEvent(ride.id, 'assigned', `${driver.fullName} accepted`);
     const fresh = await this.rideDao.findById(ride.id);
-    return this.publish(fresh, driver.userId, next?.userId ?? null);
+    const payload = await this.publish(fresh, driver.userId);
+    this.shareDriverLocation(fresh, driver.lat, driver.lng);
+    return payload;
+  }
+
+  async sweepOffers(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      await this.expireSearches();
+      await this.expireOffers();
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  async expireSearches(): Promise<void> {
+    const olderThan = new Date(Date.now() - SEARCH_MS);
+    const rides = await this.rideDao.findStaleSearches(olderThan);
+    for (const ride of rides) {
+      try {
+        await this.closeNoDriver(ride);
+      } catch (err) {
+        logger.error({ err, rideId: ride.id }, 'Could not end an unmatched search');
+      }
+    }
+  }
+
+  async expireOffers(): Promise<void> {
+    const rides = await this.rideDao.findOffered();
+    for (const ride of rides) {
+      const expires = this.offerExpiresAt(ride.events);
+      if (!expires || Date.now() <= expires.getTime() || !ride.driver) continue;
+      await this.handOff(ride.driver, ride, `${ride.driver.fullName} did not accept in time`);
+    }
   }
 
   async noShow(driverUserId: string, rideId: string, here?: { lat?: number; lng?: number }) {
@@ -321,7 +359,10 @@ export class RideService {
       await this.rideDao.addEvent(ride.id, nextStatus, `Driver set ${nextStatus}`);
     }
     const fresh = await this.rideDao.findById(ride.id);
-    return this.publish(fresh, driver.userId);
+    const payload = await this.publish(fresh, driver.userId);
+    const here = this.endPoint(options, driver);
+    this.shareDriverLocation(fresh, here?.lat, here?.lng);
+    return payload;
   }
 
   private endPoint(
@@ -387,7 +428,83 @@ export class RideService {
       riderName: profile?.fullName ?? 'Rider',
       arrivedAt: arrived ? arrived.toISOString() : null,
       noShowAt: arrived ? new Date(arrived.getTime() + NO_SHOW_WAIT_MS).toISOString() : null,
+      offerExpiresAt: ride.status === 'offered' ? this.offerExpiresAt(ride.events)?.toISOString() ?? null : null,
     };
+  }
+
+  private offerExpiresAt(events: Ride['events']): Date | null {
+    const marks = (events ?? []).filter((event) => event.status === 'offered' && event.createdAt);
+    if (marks.length === 0) return null;
+    const latest = marks.reduce((current, event) => (event.createdAt > current.createdAt ? event : current));
+    return new Date(latest.createdAt.getTime() + OFFER_MS);
+  }
+
+  private async offerTo(rideId: string, driver: Driver): Promise<void> {
+    await this.driverDao.setAvailable(driver.id, false);
+    await this.rideDao.updateStatus(rideId, 'offered', driver.id);
+    await this.rideDao.addEvent(rideId, 'offered', `Offered to ${driver.fullName}`);
+  }
+
+  private shareDriverLocation(ride: Ride | null, lat: number | string | null | undefined, lng: number | string | null | undefined): void {
+    if (!ride || !['assigned', 'arriving', 'in_progress'].includes(ride.status)) return;
+    const y = lat == null || lat === '' ? Number.NaN : Number(lat);
+    const x = lng == null || lng === '' ? Number.NaN : Number(lng);
+    if (!Number.isFinite(y) || !Number.isFinite(x)) return;
+    this.rideEvents.emitDriverLocation(ride.customerUserId, { rideId: ride.id, lat: y, lng: x });
+  }
+
+  private searchExpired(ride: Ride): boolean {
+    const started = ride.createdAt?.getTime();
+    return typeof started === 'number' && Date.now() - started >= SEARCH_MS;
+  }
+
+  private async closeNoDriver(ride: Ride): Promise<void> {
+    const current = await this.rideDao.findById(ride.id);
+    if (!current || !['searching', 'offered'].includes(current.status) || !this.searchExpired(current)) return;
+    const driverUserId = current.driver?.userId ?? null;
+    const fare = Number(current.fareAmount);
+    if (current.driverId) await this.driverDao.setAvailable(current.driverId, true);
+    const closed = await this.rideDao.closeUnmatched(current.id);
+    if (!closed) return;
+    try {
+      if (current.paymentMethod === 'WALLET' && fare > 0) {
+        await this.walletService.refundRide(current.customerUserId, fare, current.id);
+      }
+    } finally {
+      await this.rideDao.addEvent(current.id, 'cancelled', 'No driver was found nearby');
+      const fresh = await this.rideDao.findById(current.id);
+      await this.publish(fresh, driverUserId);
+    }
+  }
+
+  private async handOff(driver: Driver, ride: Ride, note: string) {
+    const current = await this.rideDao.findById(ride.id);
+    if (!current || current.driverId !== driver.id || !['offered', 'assigned', 'arriving'].includes(current.status)) {
+      return null;
+    }
+    if (current.status === 'offered' && this.searchExpired(current)) {
+      await this.closeNoDriver(current);
+      return null;
+    }
+    await this.driverDao.setAvailable(driver.id, true);
+    await this.rideDao.updateStatus(ride.id, 'searching', null);
+    await this.rideDao.addEvent(ride.id, 'searching', note);
+    if (this.searchExpired(current)) {
+      const parked = await this.rideDao.findById(ride.id);
+      if (parked) await this.closeNoDriver(parked);
+      return null;
+    }
+    const runtime = await this.catalogService.runtime();
+    const next = await this.dispatchService.assignNearest(
+      ride.vehicleTypeId,
+      Number(ride.pickupLat),
+      Number(ride.pickupLng),
+      runtime.assignRadiusKm,
+      driver.id,
+    );
+    if (next) await this.offerTo(ride.id, next);
+    const fresh = await this.rideDao.findById(ride.id);
+    return this.publish(fresh, driver.userId, next?.userId ?? null);
   }
 
   private arrivedAt(events: Ride['events']): Date | null {

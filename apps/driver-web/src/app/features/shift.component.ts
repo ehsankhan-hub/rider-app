@@ -136,6 +136,11 @@ function parseBody(value: string): unknown {
                       @if (error()) { <p class="err">{{ error() }}</p> }
                       <button type="button" (click)="riderMissing(trip)" [disabled]="busy() || !atPickup(trip)">Rider not here</button>
                       <button class="ghost" type="button" (click)="noShowPrompt.set(false)" [disabled]="busy()">Keep waiting</button>
+                    } @else if (trip.status === 'offered') {
+                      @if (error()) { <p class="err">{{ error() }}</p> }
+                      <p class="hint">Accept this ride within {{ offerLabel(trip) }}.</p>
+                      <button type="button" (click)="accept(trip)" [disabled]="busy() || offerLeft(trip) === 0">Accept</button>
+                      <button class="ghost" type="button" (click)="pass(trip)" [disabled]="busy()">Decline</button>
                     } @else if (passPrompt()) {
                       <p class="hint">Pass this trip so another driver can take it?</p>
                       <button type="button" (click)="pass(trip)" [disabled]="busy()">Pass trip</button>
@@ -420,10 +425,36 @@ export class ShiftComponent implements OnDestroy {
   }
 
   stage(trip: DriverRide): string {
+    if (trip.status === 'offered') return 'New ride request';
     if (trip.status === 'arriving' && this.waitLeft(trip) > 0) {
       return `Waiting for the rider · ${this.waitLabel(trip)}`;
     }
     return STAGE[trip.status] ?? trip.status;
+  }
+
+  offerLeft(trip: DriverRide): number {
+    const ends = trip.offerExpiresAt ? new Date(trip.offerExpiresAt).getTime() : Number.NaN;
+    if (!Number.isFinite(ends)) return 15_000;
+    return Math.max(0, ends - this.now());
+  }
+
+  offerLabel(trip: DriverRide): string {
+    return `${Math.ceil(this.offerLeft(trip) / 1000)}s`;
+  }
+
+  accept(trip: DriverRide): void {
+    this.busy.set(true);
+    this.error.set('');
+    this.api.accept(trip.id).subscribe({
+      next: (updated) => {
+        this.ride.set(updated);
+        this.busy.set(false);
+      },
+      error: (err: { error?: { error?: { message?: string } } }) => {
+        this.error.set(failureReason(err, 'Could not accept the ride'));
+        this.busy.set(false);
+      },
+    });
   }
 
   waitLeft(trip: DriverRide): number {

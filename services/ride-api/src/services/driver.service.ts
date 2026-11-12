@@ -86,7 +86,7 @@ export class DriverService {
       await this.rememberCountry(driver.id, lat, lng, driver.countryIso);
     }
     const active = await this.rideDao.findActiveByDriver(driver.id);
-    if (active) {
+    if (active && ['assigned', 'arriving', 'in_progress'].includes(active.status)) {
       this.rideEvents.emitDriverLocation(active.customerUserId, { rideId: active.id, lat, lng });
     }
   }

@@ -110,6 +110,16 @@ export class DriverController {
     }
   };
 
+  accept = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = this.requireDriver(req);
+      const data = await this.rideService.accept(userId, String(req.params['id']));
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  };
+
   pass = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = this.requireDriver(req);
