@@ -56,10 +56,17 @@ export interface Ride {
   paymentMethod: string;
   pickupAddress: string;
   dropoffAddress: string;
+  pickupLat?: string;
+  pickupLng?: string;
+  dropoffLat?: string;
+  dropoffLng?: string;
   fareAmount: string;
   distanceKm: string;
+  durationMin?: string;
   endNote?: string | null;
-  driver?: { fullName: string } | null;
+  createdAt?: string;
+  driver?: { fullName: string; lat?: string; lng?: string } | null;
+  vehicleType?: { code?: string; displayName?: string } | null;
 }
 
 @Injectable({ providedIn: 'root' })

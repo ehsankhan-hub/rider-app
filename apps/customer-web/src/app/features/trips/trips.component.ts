@@ -1,6 +1,16 @@
 import { Component, inject, signal } from '@angular/core';
 import { Ride, RideApiService } from '../../core/ride-api.service';
 
+const STATUS: Record<string, string> = {
+  requested: 'Requested',
+  searching: 'Looking for a driver',
+  assigned: 'Driver on the way',
+  arriving: 'Driver arrived',
+  in_progress: 'On trip',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
 @Component({
   selector: 'app-trips',
   standalone: true,
@@ -10,13 +20,17 @@ import { Ride, RideApiService } from '../../core/ride-api.service';
       @for (ride of rides(); track ride.id) {
         <article class="card item">
           <div>
-            <strong>{{ ride.status }}</strong>
-            <p>{{ ride.pickupAddress }} → {{ ride.dropoffAddress }}</p>
-            <small>{{ ride.paymentMethod }} · {{ ride.fareAmount }}</small>
+            <strong>{{ label(ride) }}</strong>
+            <p>{{ ride.pickupAddress }}</p>
+            <p class="to">{{ ride.dropoffAddress }}</p>
+            <small>{{ when(ride) }} · {{ ride.paymentMethod === 'WALLET' ? 'Wallet' : 'Cash' }} · {{ ride.vehicleType?.displayName }}</small>
           </div>
-          @if (ride.status !== 'completed' && ride.status !== 'cancelled' && ride.status !== 'in_progress') {
-            <button class="ghost" (click)="cancel(ride.id)">Cancel</button>
-          }
+          <div class="side">
+            <b>{{ fare(ride) }}</b>
+            @if (ride.status === 'requested' || ride.status === 'searching') {
+              <button class="ghost" (click)="cancel(ride.id)">Cancel</button>
+            }
+          </div>
         </article>
       } @empty {
         <p>No trips yet.</p>
@@ -25,9 +39,11 @@ import { Ride, RideApiService } from '../../core/ride-api.service';
   `,
   styles: [
     `
-      .page { padding: 24px; display: grid; gap: 12px; overflow: auto; height: 100%; }
-      .item { display: flex; justify-content: space-between; align-items: center; }
-      p, small { color: var(--muted); }
+      .page { padding: 24px; display: grid; gap: 12px; overflow: auto; height: 100%; align-content: start; }
+      .item { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+      p, small { color: var(--muted); margin: 2px 0; }
+      .to::before { content: '→ '; }
+      .side { display: grid; justify-items: end; gap: 8px; }
     `,
   ],
 })
@@ -37,6 +53,23 @@ export class TripsComponent {
 
   constructor() {
     this.reload();
+  }
+
+  label(ride: Ride): string {
+    if (ride.status === 'cancelled' && ride.endNote === 'no_show') return 'Driver left — no charge';
+    return STATUS[ride.status] ?? ride.status;
+  }
+
+  fare(ride: Ride): string {
+    const amount = Number(ride.fareAmount);
+    return Number.isFinite(amount) ? amount.toFixed(2) : ride.fareAmount;
+  }
+
+  when(ride: Ride): string {
+    if (!ride.createdAt) return '';
+    const at = new Date(ride.createdAt);
+    if (Number.isNaN(at.getTime())) return '';
+    return at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
 
   cancel(id: string): void {

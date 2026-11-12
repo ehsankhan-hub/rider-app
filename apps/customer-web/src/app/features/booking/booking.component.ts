@@ -47,6 +47,7 @@ const COPY = {
     standardRate: 'priced by distance and time',
     booked: 'Ride confirmed',
     searching: 'Looking for a driver',
+    bookAnother: 'Done',
     onTheWay: 'Driver is on the way',
     waiting: 'Driver is waiting at the pickup',
     started: 'Trip started',
@@ -94,6 +95,7 @@ const COPY = {
     standardRate: 'السعر حسب المسافة والوقت',
     booked: 'تم تأكيد الرحلة',
     searching: 'جارٍ البحث عن سائق',
+    bookAnother: 'تم',
     onTheWay: 'السائق في الطريق',
     waiting: 'السائق ينتظر عند نقطة الانطلاق',
     started: 'بدأت الرحلة',
@@ -134,6 +136,13 @@ type BookStage = 'search' | 'pickup' | 'rides';
   template: `
     <div class="stage" [class.picking]="stage() === 'pickup'" [attr.dir]="lang() === 'ar' ? 'rtl' : 'ltr'">
       <div #mapHost class="map"></div>
+      <button class="locate" type="button" (click)="recenter()" [attr.aria-label]="t('currentLocation')">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" fill="currentColor" />
+          <path d="M12 3v3M12 18v3M3 12h3M18 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2" />
+        </svg>
+      </button>
       @if (stage() === 'pickup' && pickupPinLabel()) {
         <div class="pin">
           <div class="pin-label">{{ pickupPinLabel() }}</div>
@@ -234,13 +243,45 @@ type BookStage = 'search' | 'pickup' | 'rides';
             <button class="go" type="button" (click)="confirmPickup()">{{ t('confirmPickup') }}</button>
           }
           @case ('rides') {
-            @if (rideLocked()) {
-              <h2>{{ t('booked') }}</h2>
-              @if (message()) {
-                <p class="status" [class.ok]="messageKind() === 'ok'" [class.err]="messageKind() === 'err'">{{ message() }}</p>
+            @if (finishedRide(); as done) {
+              <h2>{{ phaseTitle(done) }}</h2>
+              @if (done.status === 'cancelled' && done.endNote === 'no_show') {
+                <p class="hint">{{ t('noShow') }}</p>
+              } @else if (done.driver?.fullName && done.status !== 'cancelled') {
+                <p class="hint">{{ t('driver') }} · {{ done.driver?.fullName }}</p>
               }
-              @if (canCancel()) {
-                <button class="back" type="button" (click)="cancelTrip()" [disabled]="busy()">{{ t('cancelRide') }}</button>
+              <div class="ends">
+                <p><span class="mark from"></span>{{ done.pickupAddress }}</p>
+                <p><span class="mark to"></span>{{ done.dropoffAddress }}</p>
+              </div>
+              <p class="fare-line">{{ fareText(done) }} · {{ done.paymentMethod === 'WALLET' ? t('wallet') : t('cash') }}</p>
+              <button class="go" type="button" (click)="bookAnother()">{{ t('bookAnother') }}</button>
+            } @else if (rideLocked()) {
+              @if (activeRide(); as trip) {
+                <h2>{{ phaseTitle(trip) }}</h2>
+                @if (trip.status === 'searching' || trip.status === 'requested') {
+                  <div class="pulse"></div>
+                  <p class="hint">{{ t('searching') }}</p>
+                } @else {
+                  <div class="driver-row">
+                    <div class="avatar">{{ initial(trip.driver?.fullName) }}</div>
+                    <div>
+                      <strong>{{ trip.driver?.fullName || t('driver') }}</strong>
+                      <span>{{ vehicleName(trip) }}</span>
+                    </div>
+                    @if (etaLabel(trip)) {
+                      <b>{{ etaLabel(trip) }}</b>
+                    }
+                  </div>
+                }
+                <div class="ends">
+                  <p><span class="mark from"></span>{{ trip.pickupAddress }}</p>
+                  <p><span class="mark to"></span>{{ trip.dropoffAddress }}</p>
+                </div>
+                <p class="fare-line">{{ fareText(trip) }} · {{ trip.paymentMethod === 'WALLET' ? t('wallet') : t('cash') }}</p>
+                @if (canCancel()) {
+                  <button class="cancel" type="button" (click)="cancelTrip()" [disabled]="busy()">{{ t('cancelRide') }}</button>
+                }
               }
             } @else {
               <div class="sheet-head">
@@ -284,7 +325,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
             }
           }
         }
-        @if (message() && messageKind() === 'err' && !rideLocked()) {
+        @if (message() && messageKind() === 'err') {
           <p class="status err">{{ message() }}</p>
         }
       </section>
@@ -457,6 +498,57 @@ type BookStage = 'search' | 'pickup' | 'rides';
         padding: 14px 16px;
         font-size: 16px;
       }
+      .driver-row {
+        display: grid;
+        grid-template-columns: 44px 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .avatar {
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        background: #12181f;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+      }
+      .driver-row span { display: block; color: var(--muted); font-size: 13px; }
+      .fare-line { margin: 0; font-weight: 700; }
+      .pulse {
+        height: 4px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, transparent, var(--accent), transparent);
+        background-size: 200% 100%;
+        animation: sweep 1.2s linear infinite;
+      }
+      @keyframes sweep {
+        from { background-position: 100% 0; }
+        to { background-position: -100% 0; }
+      }
+      .sheet button.cancel {
+        width: 100%;
+        background: transparent;
+        color: var(--danger);
+        border: 1px solid var(--danger);
+        border-radius: 12px;
+        padding: 12px 16px;
+      }
+      .locate {
+        position: absolute;
+        z-index: 2;
+        right: 16px;
+        bottom: 300px;
+        width: 44px;
+        height: 44px;
+        padding: 0;
+        border-radius: 50%;
+        background: #fff;
+        color: #111;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
       .status { margin: 0; padding: 10px 12px; border-radius: 10px; }
       .status.ok { color: #06281a; background: var(--accent); }
       .status.err { color: #fff; background: var(--danger); }
@@ -464,6 +556,7 @@ type BookStage = 'search' | 'pickup' | 'rides';
       @media (min-width: 900px) {
         .sheet { left: 16px; right: auto; width: min(420px, calc(100% - 32px)); bottom: 16px; border-radius: 18px; }
         .stage.picking .pin { top: 50%; }
+        .locate { bottom: 24px; }
       }
     `,
   ],
@@ -503,6 +596,10 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   messageKind = signal<'ok' | 'err' | 'info'>('info');
   busy = signal(false);
   rideLocked = signal(false);
+  activeRide = signal<Ride | null>(null);
+  finishedRide = signal<Ride | null>(null);
+  currencySymbol = signal('');
+  private driverHere = signal<{ lat: number; lng: number } | null>(null);
   lang = signal<MapLang>('en');
   pickupQuery = signal('');
   pickupStreet = signal('');
@@ -526,9 +623,16 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     effect(() => {
       const ride = this.live.ride();
       if (!ride || ride.id !== this.activeRideId) return;
+      this.activeRide.set(ride);
       const finished = ride.status === 'completed' || ride.status === 'cancelled';
-      this.rideLocked.set(!finished);
-      this.show(this.rideSummary(ride), ride.status === 'cancelled' ? 'err' : 'ok');
+      if (finished) {
+        this.finishedRide.set(ride);
+        this.rideLocked.set(false);
+        return;
+      }
+      this.finishedRide.set(null);
+      this.rideLocked.set(true);
+      this.stage.set('rides');
     });
     effect(() => {
       const point = this.live.driverPoint();
@@ -576,6 +680,7 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     setTimeout(() => this.map?.invalidateSize(), 50);
     this.api.runtime().subscribe({
       next: (config) => {
+        this.currencySymbol.set(config.currency.symbol);
         this.serviceCity = { lat: config.city.lat, lng: config.city.lng };
         if (!this.pickupFromUser) this.showServiceCity();
         this.useCurrentLocation();
@@ -587,9 +692,9 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
         const open = rides.find((ride) => !['completed', 'cancelled'].includes(ride.status));
         if (!open) return;
         this.activeRideId = open.id;
+        this.activeRide.set(open);
         this.rideLocked.set(true);
         this.stage.set('rides');
-        this.show(this.rideSummary(open), 'ok');
       },
     });
 
@@ -834,8 +939,9 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
           this.busy.set(false);
           this.rideLocked.set(true);
           this.activeRideId = ride.id;
+          this.activeRide.set(ride);
+          this.finishedRide.set(null);
           this.stage.set('rides');
-          this.show(this.rideSummary(ride), 'ok');
         },
         error: (err: { error?: { error?: { message?: string } } }) => {
           this.busy.set(false);
@@ -876,12 +982,10 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   }
 
   canCancel(): boolean {
-    const ride = this.live.ride();
     if (!this.rideLocked() || !this.activeRideId) return false;
-    if (ride && ride.id === this.activeRideId) {
-      return !['in_progress', 'completed', 'cancelled'].includes(ride.status);
-    }
-    return true;
+    const live = this.live.ride();
+    const ride = live?.id === this.activeRideId ? live : this.activeRide();
+    return ride?.status === 'requested' || ride?.status === 'searching';
   }
 
   cancelTrip(): void {
@@ -890,11 +994,14 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     this.api.cancel(this.activeRideId).subscribe({
       next: () => {
         this.busy.set(false);
+        const current = this.activeRide();
+        if (current) this.finishedRide.set({ ...current, status: 'cancelled' });
         this.rideLocked.set(false);
         this.activeRideId = null;
+        this.driverHere.set(null);
         this.driverMarker?.remove();
         this.driverMarker = undefined;
-        this.show(this.t('cancelled'), 'err');
+        this.message.set('');
       },
       error: (err: { error?: { error?: { message?: string } } }) => {
         this.busy.set(false);
@@ -903,30 +1010,93 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  private rideSummary(ride: Ride): string {
-    if (ride.status === 'cancelled' && ride.endNote === 'no_show') return this.t('noShow');
-    const driver = ride.driver?.fullName;
-    const phase =
-      ride.status === 'assigned'
-        ? this.t('onTheWay')
-        : ride.status === 'arriving'
-          ? this.t('waiting')
-          : ride.status === 'in_progress'
-            ? this.t('started')
-            : ride.status === 'completed'
-              ? this.t('completed')
-              : ride.status === 'cancelled'
-                ? this.t('cancelled')
-                : ride.status === 'searching'
-                  ? this.t('searching')
-                  : ride.status;
-    if (driver && ride.status !== 'cancelled') return `${this.t('booked')}: ${phase}. ${this.t('driver')}: ${driver}`;
-    return ride.status === 'cancelled' ? phase : `${this.t('booked')}: ${phase}`;
+  phaseTitle(ride: Ride): string {
+    if (ride.status === 'assigned') return this.t('onTheWay');
+    if (ride.status === 'arriving') return this.t('waiting');
+    if (ride.status === 'in_progress') return this.t('started');
+    if (ride.status === 'completed') return this.t('completed');
+    if (ride.status === 'cancelled') return this.t('cancelled');
+    return this.t('searching');
+  }
+
+  vehicleName(ride: Ride): string {
+    return ride.vehicleType?.displayName ?? '';
+  }
+
+  initial(name: string | undefined): string {
+    const letter = name?.trim().charAt(0);
+    return letter ? letter.toUpperCase() : '?';
+  }
+
+  fareText(ride: Ride): string {
+    const amount = Number(ride.fareAmount);
+    const shown = Number.isFinite(amount) ? amount.toFixed(2) : ride.fareAmount;
+    const symbol = this.currencySymbol();
+    return symbol ? `${symbol} ${shown}` : shown;
+  }
+
+  etaLabel(ride: Ride): string {
+    if (ride.status === 'in_progress') {
+      const mins = Number(ride.durationMin);
+      if (Number.isFinite(mins) && mins > 0) return `${Math.max(1, Math.round(mins))} ${this.t('min')}`;
+      return '';
+    }
+    if (ride.status !== 'assigned') return '';
+    const here = this.driverHere();
+    const lat = here?.lat ?? Number(ride.driver?.lat);
+    const lng = here?.lng ?? Number(ride.driver?.lng);
+    const pickupLat = Number(ride.pickupLat);
+    const pickupLng = Number(ride.pickupLng);
+    if (![lat, lng, pickupLat, pickupLng].every((value) => Number.isFinite(value))) return '';
+    const km = distanceKm(lat, lng, pickupLat, pickupLng);
+    return `${Math.max(1, Math.round((km / 28) * 60))} ${this.t('min')}`;
+  }
+
+  bookAnother(): void {
+    this.finishedRide.set(null);
+    this.activeRide.set(null);
+    this.activeRideId = null;
+    this.rideLocked.set(false);
+    this.driverHere.set(null);
+    this.driverMarker?.remove();
+    this.driverMarker = undefined;
+    this.message.set('');
+    this.stage.set('search');
+    this.queueNearby();
+  }
+
+  recenter(): void {
+    const pickup = this.pickupPoint();
+    if (!navigator.geolocation) {
+      if (pickup && this.map) this.map.setView(pickup, 15);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        this.zone.run(() => {
+          const latlng = L.latLng(position.coords.latitude, position.coords.longitude);
+          const canSetPickup = this.stage() === 'search' && !this.rideLocked() && !this.finishedRide() && !this.pickupPoint();
+          if (canSetPickup) {
+            this.pickupFromUser = true;
+            this.setPoint('pickup', latlng, this.t('currentLocation'));
+            this.reverseInto('pickup', latlng);
+          }
+          this.map?.setView(latlng, 15);
+        });
+      },
+      () => {
+        this.zone.run(() => {
+          if (pickup && this.map) this.map.setView(pickup, 15);
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 },
+    );
   }
 
   private moveDriver(lat: number, lng: number): void {
     if (!this.map) return;
     const at: L.LatLngExpression = [lat, lng];
+    this.driverHere.set({ lat, lng });
     if (!this.driverMarker) {
       this.driverMarker = L.marker(at, {
         icon: L.divIcon({
@@ -1115,6 +1285,13 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
   private refreshCars(): void {
     const map = this.map;
     if (!map) return;
+    const status = this.activeRide()?.status;
+    const driverChosen = this.finishedRide() != null || (this.rideLocked() && status !== 'searching' && status !== 'requested');
+    if (driverChosen) {
+      this.nearbyCars.set([]);
+      this.drawCars([]);
+      return;
+    }
     const at = this.pickupPoint() ?? map.getCenter();
     this.api.nearbyCars(at.lat, at.lng).subscribe({
       next: (cars) => {
@@ -1290,4 +1467,14 @@ export class BookingComponent implements AfterViewInit, OnDestroy {
       maxZoom: 15,
     });
   }
+}
+
+function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }

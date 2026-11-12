@@ -20,9 +20,9 @@ interface WalletView {
         <button (click)="topUp()">Add funds</button>
       </div>
       <div class="card">
-        <h3>Ledger</h3>
+        <h3>Activity</h3>
         @for (tx of data()?.transactions ?? []; track tx.id) {
-          <p>{{ tx.type }} · {{ tx.amount }}</p>
+          <p>{{ kind(tx.type) }} · {{ tx.amount }}</p>
         }
       </div>
     </section>
@@ -45,6 +45,13 @@ export class WalletComponent {
 
   topUp(): void {
     this.api.topUp(Number(this.amount)).subscribe(() => this.reload());
+  }
+
+  kind(type: string): string {
+    if (type === 'TOPUP') return 'Added money';
+    if (type === 'RIDE_DEBIT') return 'Trip';
+    if (type === 'REFUND') return 'Refund';
+    return type;
   }
 
   private reload(): void {

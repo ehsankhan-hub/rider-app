@@ -154,8 +154,13 @@ export class RideService {
 
   async cancel(userId: string, rideId: string) {
     const ride = await this.get(userId, rideId);
-    if (['completed', 'cancelled', 'in_progress'].includes(ride.status)) {
-      throw new AppError(409, 'Ride cannot be cancelled', 'CANNOT_CANCEL');
+    if (['assigned', 'arriving', 'in_progress', 'completed', 'cancelled'].includes(ride.status)) {
+      const withDriver = ride.status === 'assigned' || ride.status === 'arriving' || ride.status === 'in_progress';
+      throw new AppError(
+        409,
+        withDriver ? 'A driver is already on this ride, so it cannot be cancelled' : 'Ride cannot be cancelled',
+        'CANNOT_CANCEL',
+      );
     }
     if (ride.driverId) {
       await this.driverDao.setAvailable(ride.driverId, true);
